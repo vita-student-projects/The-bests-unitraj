@@ -94,7 +94,7 @@ You are asked to complete three parts of the model in `motionnet/models/ptr/ptr_
 
 You can find the instructions and some hints in the file itself. 
 
-## Submission
+## Submission and Visualization
 You could follow the steps in the [easy kaggle competition](https://www.kaggle.com/competitions/dlav-vehicle-trajectory-prediction-2024/overview) to submit your results and compare them with the other students in the leaderboard.
 Here are the [medium](https://www.kaggle.com/competitions/dlav-vehicle-trajectory-prediction-medium/overview) and [hard](https://www.kaggle.com/competitions/dlav-vehicle-trajectory-prediction-hard/overview) competitions for the second and third milestones, respectively.
 We have developed a submission script for your convenience. You can run the following command to generate the submission file:
@@ -107,3 +107,6 @@ For example, if you have trained your model for 10 epochs, you will find the che
 Additionally, for the `val_data_path` in the config file, you need to put the path to the test data you want to evaluate your model on. For the easy milestone, you can put the path to the easy test data, and for the second and third milestones, you can put the path to the medium and hard test data, respectively.
 
 The script will generate a file called `submission.csv` in the root directory of the project. You can submit this file to the kaggle competition. As this file could be big, we suggest you to compress it before submitting it.
+
+In addition, the script will make some visualizations of the predictions and save them in the `visualizations` directory in the root directory of the project. You can take a look at these visualizations to understand how your model is performing.
+It's also needed for the report of the first milestone, so don't forget to include some of them in your report.
