@@ -1,3 +1,10 @@
+# Modifications from original unitraj repository 
+https://github.com/vita-epfl/unitraj-DLAV.git
+
+- The ptr.py file containing the network model has been filled
+- Few modifications for experiences has been done on the configuration files
+
+
 # UniTraj
 
 **A Unified Framework for Cross-Dataset Generalization of Vehicle Trajectory Prediction**
