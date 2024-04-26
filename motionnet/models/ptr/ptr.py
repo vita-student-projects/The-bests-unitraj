@@ -270,7 +270,7 @@ class PTR(BaseModel):
         agents_emb = self.pos_encoder(agents_emb.reshape(T,-1,H)) # Shape: (T, B*N, H)
 
         agent_masks = agent_masks.permute(0,2,1).reshape(-1,T) # Shape: (B*N, T)
-        agent_masks[:, -1][agent_masks.sum(-1) == T] = False
+        agent_masks[:,-1][agent_masks.all(dim=1)] = False
         
 
         agents_emb = layer(agents_emb, src_key_padding_mask=agent_masks).reshape(T,B,N,H)
