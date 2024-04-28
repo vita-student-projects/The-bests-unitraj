@@ -3,6 +3,7 @@ https://github.com/vita-epfl/unitraj-DLAV.git
 
 - The ptr.py file containing the network model has been filled
 - Few modifications for experiences has been done on the configuration files
+- In train.py file, the validation metric is replace by minADE6 for our expeminents
 
 
 # UniTraj

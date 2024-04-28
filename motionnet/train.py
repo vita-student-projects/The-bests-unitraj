@@ -30,8 +30,8 @@ def train(cfg):
     call_backs = []
 
     checkpoint_callback = ModelCheckpoint(
-        monitor='val/brier_fde',    # Replace with your validation metric
-        filename='{epoch}-{val/brier_fde:.2f}',
+        monitor='val/minADE6',    # Replace with your validation metric
+        filename='{epoch}-{val/minADE6:.2f}',
         save_top_k=1,
         mode='min',            # 'min' for loss/error, 'max' for accuracy
     )
