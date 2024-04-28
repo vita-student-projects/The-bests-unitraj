@@ -2,8 +2,8 @@
 model_name: ptr
 num_modes: 6
 hidden_size: 128
-num_encoder_layers: 2
-num_decoder_layers: 2
+num_encoder_layers: 3
+num_decoder_layers: 3
 tx_hidden_size: 384
 tx_num_heads: 16
 dropout: 0.1
