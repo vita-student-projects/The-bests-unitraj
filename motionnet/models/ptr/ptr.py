@@ -174,6 +174,7 @@ class PTR(BaseModel):
 
         self.L_enc = config['num_encoder_layers']
         self.dropout = config['dropout']
+        self.residual = config['residual']
         self.num_heads = config['tx_num_heads']
         self.L_dec = config['num_decoder_layers']
         self.tx_hidden_size = config['tx_hidden_size']
@@ -325,8 +326,10 @@ class PTR(BaseModel):
         ######################## Your code here ########################
         # Apply temporal attention layers and then the social attention layers on agents_emb, each for L_enc times.
         for i in range(self.L_enc):
-            agents_emb = self.temporal_attn_fn(agents_emb, opps_masks, self.temporal_attn_layers[i])
-            agents_emb = self.social_attn_fn(agents_emb, opps_masks, self.social_attn_layers[i])
+            agents_attn = agents_emb
+            agents_attn = self.temporal_attn_fn(agents_attn, opps_masks, self.temporal_attn_layers[i])
+            agents_attn = self.social_attn_fn(agents_attn, opps_masks, self.social_attn_layers[i])
+            agents_emb = self.residual*agents_emb + agents_attn
             # pdb.set_trace()
         ################################################################
 

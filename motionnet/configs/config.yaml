@@ -1,12 +1,12 @@
 # exp setting
-exp_name: 'run2_Lenc=3'
+exp_name: 'run4b_Res_Lenc=3'
 ckpt_path: null
 seed: 42
 debug: False
 devices: [0]
 
 # data related
-load_num_workers: 0
+load_num_workers: 19
 train_data_path: ["../../dlav_data/train"] #["data_samples/nuscenes"]
 val_data_path: ["../../dlav_data/val"] #["data_samples/nuscenes"]
 max_data_num: [1e6]

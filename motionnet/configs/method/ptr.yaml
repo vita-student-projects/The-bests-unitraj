@@ -7,6 +7,7 @@ num_decoder_layers: 3
 tx_hidden_size: 384
 tx_num_heads: 16
 dropout: 0.1
+residual: 1.5
 entropy_weight: 40.0
 kl_weight: 20.0
 use_FDEADE_aux_loss: True

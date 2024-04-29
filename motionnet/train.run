@@ -1,0 +1,13 @@
+#!/bin/bash -l
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=20
+#SBATCH --account=civil-459
+#SBATCH --qos=civil-459
+#SBATCH --gres=gpu:1
+#SBATCH --mem=150G
+#SBATCH --time=10:00:00
+
+conda activate dlav_proj
+python ~/dlav/dlav_proj/unitraj-DLAV/motionnet/train.py
+conda deactivate
