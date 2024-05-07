@@ -1,4 +1,7 @@
 motionnet/motionnet
+motionnet/lightning_logs
 motionnet/outputs
 motionnet/wandb
-
+motionnet/visualizations
+motionnet/submission.csv
+motionnet.egg-info
