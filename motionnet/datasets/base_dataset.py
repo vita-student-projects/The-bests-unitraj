@@ -458,6 +458,36 @@ class BaseDataset(Dataset):
         return batch_dict
 
 
+    def random_zero_out(self,scene):
+        # # Randomly generate a ratio for the number of rows to set to 0
+        # ratio = np.random.uniform(0, 0.5) 
+
+        # # Generate a random mask for rows where each row has a ratio chance of being set to 0
+        # mask = np.random.rand(scene[0]['obj_trajs_mask'].shape[0]) > ratio
+        # mask = np.expand_dims(mask, axis=1)
+
+        # # Apply the mask to the entire row
+        # scene[0]['obj_trajs_mask'] *= mask
+
+        ratio = np.random.uniform(0, 0.5) 
+        mask = np.random.rand(*scene[0]['map_polylines_mask'].shape) > ratio
+        scene[0]['map_polylines_mask'] *= mask
+
+        ratio = np.random.uniform(0, 0.3) 
+        for i in range(np.shape(scene[0]['obj_trajs_mask'])[0]):
+            mask = np.random.rand(*scene[0]['obj_trajs_mask'][i].shape) > ratio
+            new = scene[0]['obj_trajs_mask'][i] *mask
+            if not(new & scene[0]['obj_trajs_mask'][i]).all() and scene[0]['obj_trajs_mask'][i].all():
+                scene[0]['obj_trajs_mask'][i,-1]=False
+
+        
+
+            # mask = np.random.rand(*scene[0]['map_polylines_mask'].shape) > ratio
+            # scene[0]['obj_trajs_mask'] *= mask
+
+        # Apply the mask to the image
+        return scene
+
     def __len__(self):
         return len(self.data_loaded)
 
@@ -466,7 +496,10 @@ class BaseDataset(Dataset):
             return self.data_loaded_memory[idx]
         else:
             with open(self.data_loaded[idx], 'rb') as f:
-                return pickle.load(f)
+                scene = pickle.load(f)
+                if not self.is_validation:
+                    scene = self.random_zero_out(scene)
+                return scene
 
     def get_data_list(self,data_usage):
         file_list_path = os.path.join(self.cache_path,'file_list.pkl')

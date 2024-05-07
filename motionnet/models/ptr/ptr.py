@@ -329,7 +329,7 @@ class PTR(BaseModel):
             agents_attn = agents_emb
             agents_attn = self.temporal_attn_fn(agents_attn, opps_masks, self.temporal_attn_layers[i])
             agents_attn = self.social_attn_fn(agents_attn, opps_masks, self.social_attn_layers[i])
-            agents_emb = self.residual*agents_emb + agents_attn
+            agents_emb = self.residual*agents_emb + (1-self.residual)*agents_attn
             # pdb.set_trace()
         ################################################################
 
@@ -350,8 +350,10 @@ class PTR(BaseModel):
 
             ego_dec_emb_map = self.map_attn_layers(query=out_seq, key=map_features, value=map_features,
                                                    key_padding_mask=road_segs_masks)[0]
-            out_seq = out_seq + ego_dec_emb_map
+            out_seq = out_seq + ego_dec_emb_map #self.residual*out_seq + (1-self.residual)*ego_dec_emb_map
             out_seq = self.tx_decoder[d](out_seq, context, tgt_mask=time_masks, memory_key_padding_mask=env_masks)
+            # out_seq = self.residual*out_seq + (1-self.residual)*out_seq_tmp
+            
         out_dists = self.output_model(out_seq).reshape(self.T, B, self.c, -1).permute(2, 0, 1, 3)
 
         # Mode prediction

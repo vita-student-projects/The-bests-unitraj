@@ -1,7 +1,9 @@
 from motionnet.models.ptr.ptr import PTR
+from motionnet.models.gameformer.gamefomer import GameFormer
 
 __all__ = {
     'ptr': PTR,
+    'gameformer': GameFormer,
 }
 
 
