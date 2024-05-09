@@ -5,3 +5,7 @@ motionnet/wandb
 motionnet/visualizations
 motionnet/submission.csv
 motionnet.egg-info
+
+motionnet/__pycache__
+motionnet/datasets/__pycache__
+motionnet/models/__pycache__

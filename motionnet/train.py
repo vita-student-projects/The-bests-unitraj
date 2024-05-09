@@ -1,5 +1,7 @@
 import pytorch_lightning as pl
+# from pytorch_lightning.plugins import DDPPlugin
 import torch
+torch.autograd.set_detect_anomaly(True)
 
 torch.set_float32_matmul_precision('medium')
 from pytorch_lightning.loggers import WandbLogger
@@ -10,7 +12,6 @@ from utils.utils import set_seed
 from pytorch_lightning.callbacks import ModelCheckpoint  # Import ModelCheckpoint
 import hydra
 from omegaconf import DictConfig, OmegaConf
-
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def train(cfg):
@@ -46,15 +47,16 @@ def train(cfg):
         val_set, batch_size=eval_batch_size, num_workers=cfg.load_num_workers, shuffle=False, drop_last=False,
     collate_fn=train_set.collate_fn)
 
+    # ddp_plugin = DDPPlugin(find_unused_parameters=True)
     trainer = pl.Trainer(
         max_epochs=cfg.method.max_epochs,
         logger= None if cfg.debug else WandbLogger(project="motionnet", name=cfg.exp_name),
         devices=1 if cfg.debug else cfg.devices,
         gradient_clip_val=cfg.method.grad_clip_norm,
-        accelerator="cpu" if cfg.debug else "gpu",
+        accelerator="gpu" if cfg.debug else "gpu",
         profiler="simple",
-        strategy="auto" if cfg.debug else "ddp",
-        callbacks=call_backs
+        strategy="auto" if cfg.debug else "ddp_find_unused_parameters_true",#"ddp",#
+        callbacks=call_backs,
     )
 
     if cfg.ckpt_path is not None:
