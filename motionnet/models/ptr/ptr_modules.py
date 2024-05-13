@@ -250,8 +250,6 @@ class Criterion(nn.Module):
 
         # post_entropy
         final_loss = loss + kl_loss + adefde_loss
-        breakpoint()
-        NotImplementedError
 
         return final_loss
 
