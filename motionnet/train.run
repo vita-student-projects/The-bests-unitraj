@@ -9,5 +9,5 @@
 #SBATCH --time=10:00:00
 
 conda activate dlav_proj
-python ~/dlav/dlav_proj/unitraj-DLAV/motionnet/train.py
+python ~/dlav/dlav_proj/unitraj-DLAV/motionnet/train.py debug=False
 conda deactivate

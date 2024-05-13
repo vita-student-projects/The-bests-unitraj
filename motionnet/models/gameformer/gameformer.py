@@ -37,22 +37,8 @@ class GameFormer(BaseModel):
         self.agents_dynamic_encoder = nn.Sequential(init_(nn.Linear(self.k_attr, self.d_k)))
 
         # ============================== GameFormer ENCODER ==============================
-        self.social_attn_layers = []
-        self.temporal_attn_layers = []
-        for _ in range(self.L_enc):
-            tx_encoder_layer = nn.TransformerEncoderLayer(d_model=self.d_k, nhead=self.num_heads, dropout=self.dropout,
-                                                          dim_feedforward=self.tx_hidden_size)
-            self.social_attn_layers.append(nn.TransformerEncoder(tx_encoder_layer, num_layers=1))
-
-            tx_encoder_layer = nn.TransformerEncoderLayer(d_model=self.d_k, nhead=self.num_heads, dropout=self.dropout,
-                                                          dim_feedforward=self.tx_hidden_size)
-            self.temporal_attn_layers.append(nn.TransformerEncoder(tx_encoder_layer, num_layers=1))
-
-        self.temporal_attn_layers = nn.ModuleList(self.temporal_attn_layers)
-        self.social_attn_layers = nn.ModuleList(self.social_attn_layers)
-
-        # self.ego_encoder = nn.LSTM(self.d_k, self.d_k, 2, batch_first=True)
-        # self.agent_encoder = nn.LSTM(self.d_k, self.d_k, 2, batch_first=True)
+        self.ego_encoder = nn.LSTM(self.d_k, self.d_k, 2, batch_first=True)
+        self.agent_encoder = nn.LSTM(self.d_k, self.d_k, 2, batch_first=True)
         attention_layer = nn.TransformerEncoderLayer(d_model=self.d_k, nhead=self.num_heads, dim_feedforward=self.d_k*4,
                                                      activation=F.gelu, dropout=self.dropout, batch_first=True)
         self.fusion_encoder = nn.TransformerEncoder(attention_layer, self.L_enc, enable_nested_tensor=False)
@@ -67,55 +53,13 @@ class GameFormer(BaseModel):
         self.interaction_stage = nn.ModuleList([InteractionDecoder(self.future_encoder, self.T,
                                                                    self.num_heads, self.d_k, self.dropout) for _ in range(self.L_dec)])  
 
-        # ============================== PTR DECODER ==============================
-        # self.Q = nn.Parameter(torch.Tensor(self.T, 1, self.c, self.d_k), requires_grad=True)
-        # nn.init.xavier_uniform_(self.Q)
-
-        # self.tx_decoder = []
-        # for _ in range(self.L_dec):
-        #     self.tx_decoder.append(nn.TransformerDecoderLayer(d_model=self.d_k, nhead=self.num_heads,
-        #                                                       dropout=self.dropout,
-        #                                                       dim_feedforward=self.tx_hidden_size))
-        # self.tx_decoder = nn.ModuleList(self.tx_decoder)
-
         # ============================== Positional encoder ==============================
         self.pos_encoder = PositionalEncoding(self.d_k, dropout=0.0, max_len=self.past)
-
-        # ============================== OUTPUT MODEL ==============================
-        # self.output_model = OutputModel(d_k=self.d_k)
-
-        # ============================== Mode Prob prediction (P(z|X_1:t)) ==============================
-        # self.P = nn.Parameter(torch.Tensor(self.c, 1, self.d_k), requires_grad=True)
-        # nn.init.xavier_uniform_(self.P)
-
-        # self.mode_map_attn = nn.MultiheadAttention(self.d_k, num_heads=self.num_heads)
-
-        # self.prob_decoder = nn.MultiheadAttention(self.d_k, num_heads=self.num_heads, dropout=self.dropout)
-        # self.prob_predictor = init_(nn.Linear(self.d_k, 1))
 
         self.criterion = Criterion(self.config)
 
         self.fisher_information = None
         self.optimal_params = None
-
-    # def generate_decoder_mask(self, seq_len, device):
-    #     ''' For masking out the subsequent info. '''
-    #     subsequent_mask = (torch.triu(torch.ones((seq_len, seq_len), device=device), diagonal=1)).bool()
-    #     return subsequent_mask
-    
-    # def segment_map(self, map, map_encoding):
-    #     stride = 10
-    #     B, S, P, d_k = map_encoding.shape
-
-    #     # segment map
-    #     map_encoding = F.max_pool2d(map_encoding.permute(0, 3, 1, 2), kernel_size=(1, stride))
-    #     map_encoding = map_encoding.permute(0, 2, 3, 1).reshape(B, -1, d_k)
-
-    #     # segment mask
-    #     map_mask = torch.eq(map, 0)[:, :, :, 0].reshape(B, S, P//stride, P//(P//stride))
-    #     map_mask = torch.max(map_mask, dim=-1)[0].reshape(B, -1)
-
-    #     return map_encoding, map_mask
 
     def process_observations(self, ego, agents):
         '''
@@ -134,40 +78,7 @@ class GameFormer(BaseModel):
         opps_tensor = agents[:, :, :, :self.k_attr]  # only opponent states
 
         return ego_tensor, opps_tensor, opps_masks, env_masks 
-    
-    def temporal_attn_fn(self, agents_emb, agent_masks, layer):
-        '''
-        :param agents_emb: (T, B, N, H)
-        :param agent_masks: (B, T, N)
-        :return: (T, B, N, H)
-        '''
-        T,B,N,H = agents_emb.shape
-
-        agents_emb = self.pos_encoder(agents_emb.reshape(T,-1,H)) # Shape: (T, B*N, H)
-
-        agent_masks = agent_masks.permute(0,2,1).reshape(-1,T) # Shape: (B*N, T)
-        agent_masks[:,-1][agent_masks.all(dim=1)] = False
-        
-
-        agents_emb = layer(agents_emb, src_key_padding_mask=agent_masks).reshape(T,B,N,H)
-        return agents_emb
-
-    def social_attn_fn(self, agents_emb, agent_masks, layer):
-        '''
-        :param agents_emb: (T, B, N, H)
-        :param agent_masks: (B, T, N)
-        :return: (T, B, N, H)
-        '''
-        # Apply social attention layer
-        T,B,N,H = agents_emb.shape
-
-        agents_emb = agents_emb.permute(2,1,0,3).reshape(N,-1,H) #Shape: (N, B*T, H)
-        agent_masks = agent_masks.reshape(-1,N)
-
-        agents_emb = layer(agents_emb, src_key_padding_mask=agent_masks).reshape(N,B,T,H).permute(2,1,0,3)
-    
-        return agents_emb  
-
+   
     def _forward(self, inputs):
         '''
         :param ego_in: [B, T_obs, k_attr+1] with last values being the existence mask.
@@ -182,30 +93,31 @@ class GameFormer(BaseModel):
         '''
         ego_in, agents_in, roads = inputs['ego_in'], inputs['agents_in'], inputs['roads']
 
-        B = ego_in.size(0)
         # Encode all input observations (k_attr --> d_k)
         ego, neighbors, opps_masks, env_masks = self.process_observations(ego_in, agents_in)
         agents = torch.cat((ego.unsqueeze(2), neighbors), dim=2)  # [B, T, N, k_attr]
 
         # encode each agent's dynamic state using a linear layer (k_attr --> d_k)
-        agents_emb = self.agents_dynamic_encoder(agents).permute(1,0,2,3)  # T, B, N, H
-        ######################## Your code here ########################
-        # Apply temporal attention layers and then the social attention layers on agents_emb, each for L_enc times.
-        for i in range(self.L_enc):
-            agents_attn = agents_emb
-            agents_attn = self.temporal_attn_fn(agents_attn, opps_masks, self.temporal_attn_layers[i])
-            agents_attn = self.social_attn_fn(agents_attn, opps_masks, self.social_attn_layers[i])
-            agents_emb = self.residual*agents_emb + (1-self.residual)*agents_attn
-        ################################################################
-        encoded_agents = agents_emb[-1]# [B, N, H]
-        agents_masks = opps_masks[:,-1] # [B, N]
+        agents_emb = self.agents_dynamic_encoder(agents)  # B, T, N, H  
+
+        # # positional encoding
+        # B,T,N,H = agents_emb.size() 
+        # agents_emb = self.pos_encoder(agents_emb.permute(1,0,2,3).reshape(T,-1,H)) # T, B*N, H 
+        # agents_emb = agents_emb.reshape(T,B,N,H).permute(1,0,2,3) # B, T, N, H    
 
         N = agents_emb.size(2)
+
+        encoded_ego = self.ego_encoder(agents_emb[:,:,0])[0][:,-1] #B, H
+        encoded_neighbors = [self.agent_encoder(agents_emb[:,:,i])[0][:,-1] for i in range(1,N)]
+        
+        encoded_agents = torch.stack([encoded_ego] + encoded_neighbors, dim=1)# [B, N, H]
+        agents_masks = opps_masks[:,-1] # [B, N] 
 
         agents_map_features = []
         agents_road_segs_masks = []
         masks = []
         encodings = []
+        agents_emb = agents_emb.permute(1,0,2,3) #T,B,N,H
 
         for n in range(N):
             agent_map_features, agent_road_segs_masks = self.map_encoder(roads, agents_emb[:,:,n])
@@ -221,18 +133,10 @@ class GameFormer(BaseModel):
             masks.append(mask)
             encoding = fusion_input #self.fusion_encoder(fusion_input, src_key_padding_mask=mask) # [B,N+S,H]
             encodings.append(encoding)
-
-        # map_features = torch.stack(agents_map_features, dim=1).permute(2,1,0,3) # [B,N,S,H]
-        # road_segs_masks = torch.stack(agents_road_segs_masks, dim=1) # [B,N,S]
         
         # outputs
         encodings = torch.stack(encodings, dim=1)
         masks = torch.stack(masks, dim=1)
-        # encoder_outputs = {
-        #     'actors': agents,
-        #     'encodings': encodings,
-        #     'masks': masks
-        # }
 
         # agents [B, T, N, k_attr]
         # encodings [B, N, N+S, H]

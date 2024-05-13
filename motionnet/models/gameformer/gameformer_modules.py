@@ -8,40 +8,6 @@ import torch.nn.functional as F
 from scipy import special
 from torch.distributions import MultivariateNormal, Laplace
 
-class MapEncoderCNN(nn.Module):
-    '''
-    Regular CNN encoder for road image.
-    '''
-    def __init__(self, d_k=64, dropout=0.1, c=10):
-        super(MapEncoderCNN, self).__init__()
-        self.dropout = dropout
-        self.c = c
-        init_ = lambda m: init(m, nn.init.xavier_normal_, lambda x: nn.init.constant_(x, 0), np.sqrt(2))
-        # MAP ENCODER
-        fm_size = 7
-        self.map_encoder = nn.Sequential(
-            init_(nn.Conv2d(3, 32, kernel_size=4, stride=1)), nn.ReLU(),
-            init_(nn.Conv2d(32, 32, kernel_size=4, stride=2)), nn.ReLU(),
-            init_(nn.Conv2d(32, 32, kernel_size=3, stride=2)), nn.ReLU(),
-            init_(nn.Conv2d(32, 32, kernel_size=3, stride=2)), nn.ReLU(),
-            init_(nn.Conv2d(32, fm_size*self.c, kernel_size=2, stride=2)), nn.ReLU(),
-            nn.Dropout2d(p=self.dropout)
-        )
-        self.map_feats = nn.Sequential(
-            init_(nn.Linear(7*7*fm_size, d_k)), nn.ReLU(),
-            init_(nn.Linear(d_k, d_k)), nn.ReLU(),
-        )
-        self.fisher_information = None
-        self.optimal_params = None
-
-    def forward(self, roads):
-        '''
-        :param roads: road image with size (B, 128, 128, 3)
-        :return: road features, with one for every mode (B, c, d_k)
-        '''
-        B = roads.size(0)  # batch size
-        return self.map_feats(self.map_encoder(roads).view(B, self.c, -1))
-
 class MapEncoderPts(nn.Module):
     '''
     This class operates on the road lanes provided as a tensor with shape

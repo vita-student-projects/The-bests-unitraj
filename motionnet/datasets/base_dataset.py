@@ -498,7 +498,7 @@ class BaseDataset(Dataset):
             with open(self.data_loaded[idx], 'rb') as f:
                 scene = pickle.load(f)
                 if not self.is_validation:
-                    scene = self.random_zero_out(scene)
+                    scene = scene #self.random_zero_out(scene)
                 return scene
 
     def get_data_list(self,data_usage):

@@ -1,5 +1,5 @@
 # exp setting
-exp_name: 'GameFormer_debug'
+exp_name: 'GameFormer1'
 ckpt_path: null
 seed: 42
 debug: True
