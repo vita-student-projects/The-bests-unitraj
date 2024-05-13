@@ -1,9 +1,18 @@
 # Modifications from original unitraj repository 
 https://github.com/vita-epfl/unitraj-DLAV.git
 
+### Milestone 1
 - The ptr.py file containing the network model has been filled
 - Few modifications for experiences has been done on the configuration files
 - In train.py file, the validation metric is replace by minADE6 for our expeminents
+
+### Milestone 2
+- One new parameter `residual` in the `ptr.yaml` file
+- Added residuals for encoder layers in `ptr.py` model
+
+- One new parameter `augment` in the `config.yaml` file
+- Added random masking while training in `__getitem__` method of `BaseDataset`class in the `base_dataset.py` file. This augmentation is done in a new method named `random_zero_out`. 
+
 
 
 # UniTraj
