@@ -1,9 +1,9 @@
 # exp setting
-exp_name: 'ptr_1000'
+exp_name: 'NewGameFormer_debug'
 ckpt_path: null
 seed: 42
 debug: True
-devices: [0]
+devices: [0,1]
 
 # data related
 load_num_workers: 19

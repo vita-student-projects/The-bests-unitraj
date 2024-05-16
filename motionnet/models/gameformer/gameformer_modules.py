@@ -28,6 +28,8 @@ class MapEncoderPts(nn.Module):
             init_(nn.Linear(self.d_k, self.d_k)), nn.ReLU(), nn.Dropout(self.dropout),
             init_(nn.Linear(self.d_k, self.d_k)),
         )
+        # Dimensionality reduction layer
+        self.dim_reduction = nn.Linear(d_k*20, d_k)
 
     def get_road_pts_mask(self, roads):
         road_segment_mask = torch.sum(roads[:, :, :, -1], dim=2) == 0
@@ -35,13 +37,11 @@ class MapEncoderPts(nn.Module):
         road_pts_mask[:, 0][road_pts_mask.sum(-1) == roads.shape[2]] = False  # Ensures no NaNs due to empty rows.
         return road_segment_mask, road_pts_mask
 
-    def forward(self, roads, agents_emb):
+    def forward(self, roads):
         '''
-        :param roads: (B, S, P, k_attr+1)  where B is batch size, S is num road segments, P is
-        num pts per road segment.
-        :param agents_emb: (T_obs, B, d_k) where T_obs is the observation horizon. THis tensor is obtained from
-        PTR's encoder, and basically represents the observed socio-temporal context of agents.
-        :return: embedded road segments with shape (S)
+        Encode road map features independently of agent embeddings.
+        :param roads: (B, S, P, k_attr+1) - Batch size, Number of road segments, Points per segment, Attributes per point.
+        :return: Embedded road segments with shape (S, B, d_k) and road segment mask.
         '''
         B = roads.shape[0]
         S = roads.shape[1]
@@ -49,16 +49,20 @@ class MapEncoderPts(nn.Module):
         road_segment_mask, road_pts_mask = self.get_road_pts_mask(roads)
         road_pts_feats = self.road_pts_lin(roads[:, :, :, :self.map_attr]).view(B*S, P, -1).permute(1, 0, 2)
 
-        # Combining information from each road segment using attention with agent contextual embeddings as queries.
-        agents_emb = agents_emb[-1].unsqueeze(2).repeat(1, 1, S, 1).view(-1, self.d_k).unsqueeze(0)
-        road_seg_emb = self.road_pts_attn_layer(query=agents_emb, key=road_pts_feats, value=road_pts_feats,
-                                                key_padding_mask=road_pts_mask)[0]
-        road_seg_emb = self.norm1(road_seg_emb)
-        road_seg_emb2 = road_seg_emb + self.map_feats(road_seg_emb)
-        road_seg_emb2 = self.norm2(road_seg_emb2)
-        road_seg_emb = road_seg_emb2.view(B, S, -1)
+        # Apply self-attention over the road points features.
+        road_pts_feats, _ = self.road_pts_attn_layer(road_pts_feats, road_pts_feats, road_pts_feats, key_padding_mask=road_pts_mask)
+        road_pts_feats = self.norm1(road_pts_feats)
 
-        return road_seg_emb.permute(1, 0, 2), road_segment_mask
+        # Apply additional mappings to the attended features.
+        road_pts_feats = road_pts_feats + self.map_feats(road_pts_feats)
+        road_pts_feats = self.norm2(road_pts_feats)
+
+        # Reshape to match expected output dimensions
+        road_pts_feats = road_pts_feats.view(B, S, -1)  
+        road_pts_feats = self.dim_reduction(road_pts_feats) # (B, S, H)
+        
+        return road_pts_feats, road_segment_mask
+
 
 def init(module, weight_init, bias_init, gain=1):
     '''
@@ -341,3 +345,32 @@ class Criterion(nn.Module):
                                dim=-1) * mask.unsqueeze(0)).mean(dim=2).transpose(0, 1)
         loss, min_inds = (fde_loss + ade_loss).min(dim=1)
         return 100.0 * loss.mean()
+    
+
+class OutputModel(nn.Module):
+    '''
+    This class operates on the output of PTR's decoder representation. It produces the parameters of a
+    bivariate Gaussian distribution.
+    '''
+    def __init__(self, d_k=64):
+        super(OutputModel, self).__init__()
+        self.d_k = d_k
+        init_ = lambda m: init(m, nn.init.xavier_normal_, lambda x: nn.init.constant_(x, 0), np.sqrt(2))
+        self.observation_model = nn.Sequential(
+            init_(nn.Linear(d_k, d_k)), nn.ReLU(),
+            init_(nn.Linear(d_k, d_k)), nn.ReLU(),
+            init_(nn.Linear(d_k, 5))
+        )
+        self.min_stdev = 0.01
+
+    def forward(self, agent_decoder_state):
+        T = agent_decoder_state.shape[0]
+        BK = agent_decoder_state.shape[1]
+        pred_obs = self.observation_model(agent_decoder_state.reshape(-1, self.d_k)).reshape(T, BK, -1)
+
+        x_mean = pred_obs[:, :, 0]
+        y_mean = pred_obs[:, :, 1]
+        x_sigma = F.softplus(pred_obs[:, :, 2]) + self.min_stdev
+        y_sigma = F.softplus(pred_obs[:, :, 3]) + self.min_stdev
+        rho = torch.tanh(pred_obs[:, :, 4]) * 0.9  # for stability
+        return torch.stack([x_mean, y_mean, x_sigma, y_sigma, rho], dim=2)
