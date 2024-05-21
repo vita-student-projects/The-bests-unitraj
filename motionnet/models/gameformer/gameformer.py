@@ -66,6 +66,12 @@ class GameFormer(BaseModel):
                                                               dim_feedforward=self.tx_hidden_size))
         self.tx_decoder = nn.ModuleList(self.tx_decoder)
 
+        self.ego_encoder = nn.LSTM(self.d_k, self.d_k, 2, batch_first=True)
+        self.agent_encoder = nn.LSTM(self.d_k, self.d_k, 2, batch_first=True)
+
+        self.future_encoder = FutureEncoder(k_attr=k_attr, d_k=self.d_k)
+        self.interaction_stage = nn.ModuleList([InteractionDecoder(self.future_encoder, self.T,
+                                                                   self.num_heads, self.d_k, self.dropout) for _ in range(self.N_levels)])
         # ============================== Positional encoder ==============================
         self.pos_encoder = PositionalEncoding(self.d_k, dropout=0.0, max_len=self.past)
 
@@ -185,11 +191,11 @@ class GameFormer(BaseModel):
             agents_emb = self.residual*agents_emb + (1-self.residual)*agents_attn
             # pdb.set_trace()
         ################################################################
-
+        N = agents_emb.size(2)
         # ego_soctemp_emb = agents_emb[:, :, 0]  # take ego-agent encodings only.
         probs = []
         preds = []
-        for n in range(agents_emb.size(2)):
+        for n in range(N):
             agent = agents_emb[:, :, n]
 
             orig_map_features, orig_road_segs_masks = self.map_encoder(roads, agent)
@@ -225,14 +231,51 @@ class GameFormer(BaseModel):
             preds.append(out_dists)
 
         mode_probs = torch.stack(probs, dim=1)  # [B, N, c]
-        out_dists = torch.stack(preds, dim=0)   # [N, c, T, B, 5]
+        out_dists = torch.stack(preds, dim=0).permute(3,0,1,2,4)# [B, N, c, T, 5]
 
-        
+        encoded_ego = self.ego_encoder(agents_emb[:,:,0])[0][-1] #B, H
+        encoded_neighbors = [self.agent_encoder(agents_emb[:,:,0])[0][-1] for i in range(1,N)]
+        encoded_agents = torch.stack([encoded_ego]+encoded_neighbors,dim=1) #B, N, H
+        last_content = encoded_agents.unsqueeze(2).repeat(1,1,self.c,1) #B, N, c, H
+        last_level = out_dists
+        last_scores = mode_probs
+
+        current_states = agents_tensor[:,-1] # [B, N, k_attr]
+
 
         # return  [c, T, B, 5], [B, c]
         output = {}
-        output['level_0_probability'] = mode_probs[:,0] # #[B, c]
-        output['level_0_trajectory'] = out_dists[0].permute(2,0,1,3) # [c, T, B, 5] to [B, c, T, 5] to be able to parallelize code
+        output['level_0_probability'] = mode_probs[:,0] # [B, c]
+        output['level_0_trajectory'] = out_dists[:,0] # [B, c, T, 5]
+
+        #level k interaction
+        for k in range(1, self.N_levels+1):
+            print('ok')
+            interaction_decoder = self.interaction_stage[k-1]
+            results = [interaction_decoder(i, current_states[:, :N], last_level, last_scores, \
+                        last_content[:, i], agents_emb[:,:,i], opps_masks[:,i]) for i in range(N)]
+            last_content = torch.stack([result[0] for result in results], dim=1)
+            last_level = torch.stack([result[1] for result in results], dim=1)
+            last_scores = torch.stack([result[2] for result in results], dim=1) 
+            # decoder_outputs[f'level_{k}_interactions'] = last_level
+            # decoder_outputs[f'level_{k}_scores'] = last_scores
+
+            pred_obs = last_level[:,0] # [B, c, T, 5]
+            mode_probs = F.softmax(last_scores[:,0], dim=1) # [B, c]
+
+            x_mean = pred_obs[..., 0]
+            y_mean = pred_obs[..., 1]
+            x_sigma = F.softplus(pred_obs[..., 2]) + 0.01
+            y_sigma = F.softplus(pred_obs[..., 3]) + 0.01
+            rho = torch.tanh(pred_obs[..., 4]) * 0.9  # for stability
+
+
+            out_dists = torch.stack([x_mean, y_mean, x_sigma, y_sigma, rho], dim=3)
+
+            
+            output[f'level_{k}_probability'] = mode_probs #[B, c]
+            output[f'level_{k}_trajectory'] = out_dists #[B, c, T, 5]      
+
         if len(np.argwhere(np.isnan(out_dists.detach().cpu().numpy()))) > 1:
             breakpoint()
         return output

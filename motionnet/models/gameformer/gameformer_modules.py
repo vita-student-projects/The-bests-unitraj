@@ -211,6 +211,7 @@ class InteractionDecoder(nn.Module):
         interaction = self.interaction_encoder(futures, mask[:, :N])
 
         # append the interaction encoding to the context encoding
+        breakpoint()
         encoding = torch.cat([interaction, encoding], dim=1)
         mask = torch.cat([mask[:, :N], mask], dim=1).clone()
         mask[:, id] = True # mask the agent future itself from last level
