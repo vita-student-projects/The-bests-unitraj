@@ -1,5 +1,5 @@
 # exp setting
-exp_name: 'NewGameFormer_debug'
+exp_name: 'gameformer old new loss'
 ckpt_path: null
 seed: 42
 debug: True
