@@ -211,7 +211,6 @@ class InteractionDecoder(nn.Module):
         interaction = self.interaction_encoder(futures, mask[:, :N])
 
         # append the interaction encoding to the context encoding
-        breakpoint()
         encoding = torch.cat([interaction, encoding], dim=1)
         mask = torch.cat([mask[:, :N], mask], dim=1).clone()
         mask[:, id] = True # mask the agent future itself from last level
@@ -277,7 +276,7 @@ class Criterion(nn.Module):
         CURSOR_UP_ONE = '\x1b[1A'  # ANSI escape code to move cursor up by one line
         ERASE_LINE = '\x1b[2K'     # ANSI escape code to erase the line
         # breakpoint()
-        for _ in range(N_levels+2):
+        for _ in range(0,N_levels+2):
             sys.stdout.write(CURSOR_UP_ONE)  # Move cursor up by one line
             sys.stdout.write(ERASE_LINE)     # Clear the line
 
@@ -382,12 +381,12 @@ class OutputModel(nn.Module):
         BK = agent_decoder_state.shape[1]
         pred_obs = self.observation_model(agent_decoder_state.reshape(-1, self.d_k)).reshape(T, BK, -1)
 
-        x_mean = pred_obs[:, :, 0]
-        y_mean = pred_obs[:, :, 1]
-        x_sigma = F.softplus(pred_obs[:, :, 2]) + self.min_stdev
-        y_sigma = F.softplus(pred_obs[:, :, 3]) + self.min_stdev
-        rho = torch.tanh(pred_obs[:, :, 4]) * 0.9  # for stability
-        return torch.stack([x_mean, y_mean, x_sigma, y_sigma, rho], dim=2)
+        # x_mean = pred_obs[:, :, 0]
+        # y_mean = pred_obs[:, :, 1]
+        # x_sigma = F.softplus(pred_obs[:, :, 2]) + self.min_stdev
+        # y_sigma = F.softplus(pred_obs[:, :, 3]) + self.min_stdev
+        # rho = torch.tanh(pred_obs[:, :, 4]) * 0.9  # for stability
+        return pred_obs #torch.stack([x_mean, y_mean, x_sigma, y_sigma, rho], dim=2)
 
 
 # import math

@@ -69,6 +69,7 @@ class GameFormer(BaseModel):
         self.ego_encoder = nn.LSTM(self.d_k, self.d_k, 2, batch_first=True)
         self.agent_encoder = nn.LSTM(self.d_k, self.d_k, 2, batch_first=True)
 
+        self.initial_stage = InitialDecoder(self.c, 16, self.T, self.num_heads,d_k=self.d_k)
         self.future_encoder = FutureEncoder(k_attr=k_attr, d_k=self.d_k)
         self.interaction_stage = nn.ModuleList([InteractionDecoder(self.future_encoder, self.T,
                                                                    self.num_heads, self.d_k, self.dropout) for _ in range(self.N_levels)])
@@ -192,9 +193,18 @@ class GameFormer(BaseModel):
             # pdb.set_trace()
         ################################################################
         N = agents_emb.size(2)
+
+        current_states = agents_tensor[:,-1] # [B, N, k_attr]
+
+        encoded_ego = self.ego_encoder(agents_emb[:,:,0])[0][-1] #B, H
+        encoded_neighbors = [self.agent_encoder(agents_emb[:,:,0])[0][-1] for i in range(1,N)]
+        encoded_agents = torch.stack([encoded_ego]+encoded_neighbors,dim=1) #B, N, H
+
         # ego_soctemp_emb = agents_emb[:, :, 0]  # take ego-agent encodings only.
         probs = []
         preds = []
+        encodings = []
+        masks = []
         for n in range(N):
             agent = agents_emb[:, :, n]
 
@@ -225,56 +235,37 @@ class GameFormer(BaseModel):
 
             mode_params_emb = self.mode_map_attn(query=mode_params_emb, key=orig_map_features, value=orig_map_features,
                                                     key_padding_mask=orig_road_segs_masks)[0] + mode_params_emb
-            mode_probs = F.softmax(self.prob_predictor(mode_params_emb).squeeze(-1), dim=0).transpose(0, 1)
+            mode_probs = self.prob_predictor(mode_params_emb).squeeze(-1).transpose(0, 1)
 
             probs.append(mode_probs)
             preds.append(out_dists)
+            encodings.append(torch.cat([encoded_agents, orig_map_features.permute(1,0,2)], dim=1))
+            masks.append(torch.cat([opps_masks[:,-1], orig_road_segs_masks], dim=1))
 
-        mode_probs = torch.stack(probs, dim=1)  # [B, N, c]
-        out_dists = torch.stack(preds, dim=0).permute(3,0,1,2,4)# [B, N, c, T, 5]
+        last_scores = torch.stack(probs, dim=1)  # [B, N, c]
+        last_level = torch.stack(preds, dim=0).permute(3,0,1,2,4)# [B, N, c, T, 5]
+        encodings = torch.stack(encodings, dim=1)  # [B, N, c, H]
+        masks = torch.stack(masks, dim=1)  # [B, N, c]
 
-        encoded_ego = self.ego_encoder(agents_emb[:,:,0])[0][-1] #B, H
-        encoded_neighbors = [self.agent_encoder(agents_emb[:,:,0])[0][-1] for i in range(1,N)]
-        encoded_agents = torch.stack([encoded_ego]+encoded_neighbors,dim=1) #B, N, H
-        last_content = encoded_agents.unsqueeze(2).repeat(1,1,self.c,1) #B, N, c, H
-        last_level = out_dists
-        last_scores = mode_probs
-
-        current_states = agents_tensor[:,-1] # [B, N, k_attr]
-
+        results = [self.initial_stage(i, current_states[:,i], encodings[:,i], masks[:,i]) for i in range(N)]
+        last_content = torch.stack([result[0] for result in results], dim=1)# [B, N, c, H]
+        # last_content = encoded_agents.unsqueeze(2).repeat(1,1,self.c,1) #B, N, c, H
 
         # return  [c, T, B, 5], [B, c]
         output = {}
-        output['level_0_probability'] = mode_probs[:,0] # [B, c]
-        output['level_0_trajectory'] = out_dists[:,0] # [B, c, T, 5]
+        output['level_0_trajectory'], output['level_0_probability'] = self.get_probs(last_level, last_scores)
+
 
         #level k interaction
         for k in range(1, self.N_levels+1):
-            print('ok')
             interaction_decoder = self.interaction_stage[k-1]
             results = [interaction_decoder(i, current_states[:, :N], last_level, last_scores, \
-                        last_content[:, i], agents_emb[:,:,i], opps_masks[:,i]) for i in range(N)]
+                        last_content[:, i], encodings[:,i], masks[:,i]) for i in range(N)]
             last_content = torch.stack([result[0] for result in results], dim=1)
             last_level = torch.stack([result[1] for result in results], dim=1)
             last_scores = torch.stack([result[2] for result in results], dim=1) 
-            # decoder_outputs[f'level_{k}_interactions'] = last_level
-            # decoder_outputs[f'level_{k}_scores'] = last_scores
 
-            pred_obs = last_level[:,0] # [B, c, T, 5]
-            mode_probs = F.softmax(last_scores[:,0], dim=1) # [B, c]
-
-            x_mean = pred_obs[..., 0]
-            y_mean = pred_obs[..., 1]
-            x_sigma = F.softplus(pred_obs[..., 2]) + 0.01
-            y_sigma = F.softplus(pred_obs[..., 3]) + 0.01
-            rho = torch.tanh(pred_obs[..., 4]) * 0.9  # for stability
-
-
-            out_dists = torch.stack([x_mean, y_mean, x_sigma, y_sigma, rho], dim=3)
-
-            
-            output[f'level_{k}_probability'] = mode_probs #[B, c]
-            output[f'level_{k}_trajectory'] = out_dists #[B, c, T, 5]      
+            output[f'level_{k}_trajectory'], output[f'level_{k}_probability'] = self.get_probs(last_level, last_scores)     
 
         if len(np.argwhere(np.isnan(out_dists.detach().cpu().numpy()))) > 1:
             breakpoint()
@@ -302,6 +293,18 @@ class GameFormer(BaseModel):
 
         return output, loss
 
+    def get_probs(self, last_level, last_scores):
+        pred_obs = last_level[:,0] # [B, c, T, 5]
+        mode_probs = F.softmax(last_scores[:,0], dim=1) # [B, c]
+
+        x_mean = pred_obs[..., 0]
+        y_mean = pred_obs[..., 1]
+        x_sigma = F.softplus(pred_obs[..., 2]) + 0.01
+        y_sigma = F.softplus(pred_obs[..., 3]) + 0.01
+        rho = torch.tanh(pred_obs[..., 4]) * 0.9  # for stability
+        out_dists = torch.stack([x_mean, y_mean, x_sigma, y_sigma, rho], dim=3)
+        return out_dists, mode_probs
+    
     def get_loss(self, batch, prediction):
         inputs = batch['input_dict']
         ground_truth = torch.cat([inputs['center_gt_trajs'][...,:2],inputs['center_gt_trajs_mask'].unsqueeze(-1)],dim=-1)
