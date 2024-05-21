@@ -3,7 +3,7 @@ exp_name: 'gameformer old new loss'
 ckpt_path: null
 seed: 42
 debug: True
-devices: [0,1]
+devices: [0]
 
 # data related
 load_num_workers: 19
