@@ -58,6 +58,9 @@ class GameFormer(BaseModel):
         # ============================== PTR DECODER ==============================
         self.Q = nn.Parameter(torch.Tensor(self.T, 1, self.c, self.d_k), requires_grad=True)
         nn.init.xavier_uniform_(self.Q)
+        # self.Q = [nn.Parameter(torch.Tensor(self.T, 1, self.c, self.d_k), requires_grad=True) for _ in range(self.config.max_num_agents)]
+        # for i in range(self.config.max_num_agents):
+        #     nn.init.xavier_uniform_(self.Q[i])
 
         self.tx_decoder = []
         for _ in range(self.L_dec):
@@ -177,8 +180,8 @@ class GameFormer(BaseModel):
 
         B = ego_in.size(0)
         # Encode all input observations (k_attr --> d_k)
-        ego_tensor, _agents_tensor, opps_masks, env_masks = self.process_observations(ego_in, agents_in)
-        agents_tensor = torch.cat((ego_tensor.unsqueeze(2), _agents_tensor), dim=2)  # [B, T, N, k_attr]
+        ego_tensor, neighbors_tensor, opps_masks, env_masks = self.process_observations(ego_in, agents_in)
+        agents_tensor = torch.cat((ego_tensor.unsqueeze(2), neighbors_tensor), dim=2)  # [B, T, N, k_attr]
 
         # encode each agent's dynamic state using a linear layer (k_attr --> d_k)
         agents_emb = self.agents_dynamic_encoder(agents_tensor).permute(1, 0, 2, 3)  # T, B, N, H
@@ -196,8 +199,8 @@ class GameFormer(BaseModel):
 
         current_states = agents_tensor[:,-1] # [B, N, k_attr]
 
-        encoded_ego = self.ego_encoder(agents_emb[:,:,0])[0][-1] #B, H
-        encoded_neighbors = [self.agent_encoder(agents_emb[:,:,0])[0][-1] for i in range(1,N)]
+        encoded_ego = self.agent_encoder(agents_emb[:,:,0])[0][-1] #B, H
+        encoded_neighbors = [self.agent_encoder(agents_emb[:,:,i])[0][-1] for i in range(1,N)]
         encoded_agents = torch.stack([encoded_ego]+encoded_neighbors,dim=1) #B, N, H
 
         # ego_soctemp_emb = agents_emb[:, :, 0]  # take ego-agent encodings only.
@@ -275,40 +278,61 @@ class GameFormer(BaseModel):
         model_input = {}
         inputs = batch['input_dict']
         agents_in, agents_mask, roads = inputs['obj_trajs'],inputs['obj_trajs_mask'] ,inputs['map_polylines']
-        ego_in = torch.gather(agents_in, 1, inputs['track_index_to_predict'].view(-1,1,1,1).repeat(1,1,*agents_in.shape[-2:])).squeeze(1)
-        ego_mask = torch.gather(agents_mask, 1, inputs['track_index_to_predict'].view(-1,1,1).repeat(1,1,agents_mask.shape[-1])).squeeze(1)
-        agents_in = torch.cat([agents_in[...,:2],agents_mask.unsqueeze(-1)],dim=-1)
-        agents_in = agents_in.transpose(1,2)
+        B,N,Tobs = agents_in.shape[:3]
+        # ego_in = torch.gather(agents_in, 1, inputs['track_index_to_predict'].view(-1,1,1,1).repeat(1,1,*agents_in.shape[-2:])).squeeze(1)
+        # ego_mask = torch.gather(agents_mask, 1, inputs['track_index_to_predict'].view(-1,1,1).repeat(1,1,agents_mask.shape[-1])).squeeze(1)
+        # agents_in = torch.cat([agents_in[...,:2],agents_mask.unsqueeze(-1)],dim=-1)
+        # agents_in = agents_in.transpose(1,2)
+        # ego_in = torch.cat([ego_in[...,:2],ego_mask.unsqueeze(-1)],dim=-1)
+        all_indices = torch.arange(self.config.max_num_agents).unsqueeze(0).repeat(B, 1).to(agents_in.device)
+        ego_indices = inputs['track_index_to_predict'].unsqueeze(1).to(all_indices.device)
+        ego_select_mask = all_indices == ego_indices.repeat(1,N)
+        neighbors_select_mask = all_indices != ego_indices.repeat(1,N)
+
+        if torch.any(inputs['track_index_to_predict'] != 0):
+            breakpoint()
+
+        # breakpoint()
+        ego_in = torch.masked_select(agents_in.view(B,N,-1), ego_select_mask.unsqueeze(-1)).view(B, Tobs, -1)
+        ego_mask = torch.masked_select(agents_mask, ego_select_mask.unsqueeze(-1)).view(B, Tobs)
+        neighbors_in = torch.masked_select(agents_in.view(B,N,-1), neighbors_select_mask.unsqueeze(-1)).view(B, N-1, Tobs, -1)
+        neighbors_mask = torch.masked_select(agents_mask, neighbors_select_mask.unsqueeze(-1)).view(B, N-1, Tobs)
+
         ego_in = torch.cat([ego_in[...,:2],ego_mask.unsqueeze(-1)],dim=-1)
+        neighbors_in = torch.cat([neighbors_in[...,:2],neighbors_mask.unsqueeze(-1)],dim=-1)
+
+        # breakpoint()
         roads = torch.cat([inputs['map_polylines'][...,:2],inputs['map_polylines_mask'].unsqueeze(-1)],dim=-1)
         model_input['ego_in'] = ego_in
-        model_input['agents_in'] = agents_in
+        model_input['agents_in'] = neighbors_in.transpose(1,2)
         model_input['roads'] = roads
         output = self._forward(model_input)
 
         loss = self.get_loss(batch, output)
 
-        output['predicted_trajectory'] = output[f'level_{self.N_levels}_trajectory']
-        output['predicted_probability'] = output[f'level_{self.N_levels}_probability']
+        output['predicted_trajectory'] = output[f'level_{self.N_levels}_trajectory'][:,0]
+        output['predicted_probability'] = output[f'level_{self.N_levels}_probability'][:,0]
 
         return output, loss
 
     def get_probs(self, last_level, last_scores):
-        pred_obs = last_level[:,0] # [B, c, T, 5]
-        mode_probs = F.softmax(last_scores[:,0], dim=1) # [B, c]
+        pred_obs = last_level # [B, c, T, 5]
+        mode_probs = F.softmax(last_scores, dim=-1) # [B, c]
 
         x_mean = pred_obs[..., 0]
         y_mean = pred_obs[..., 1]
         x_sigma = F.softplus(pred_obs[..., 2]) + 0.01
         y_sigma = F.softplus(pred_obs[..., 3]) + 0.01
         rho = torch.tanh(pred_obs[..., 4]) * 0.9  # for stability
-        out_dists = torch.stack([x_mean, y_mean, x_sigma, y_sigma, rho], dim=3)
+        out_dists = torch.stack([x_mean, y_mean, x_sigma, y_sigma, rho], dim=-1)
         return out_dists, mode_probs
     
     def get_loss(self, batch, prediction):
         inputs = batch['input_dict']
-        ground_truth = torch.cat([inputs['center_gt_trajs'][...,:2],inputs['center_gt_trajs_mask'].unsqueeze(-1)],dim=-1)
-        loss = self.criterion(prediction, ground_truth, self.N_levels, inputs['center_gt_final_valid_idx'])
+        # ego_gt = torch.cat([inputs['center_gt_trajs'][...,:2],inputs['center_gt_trajs_mask'].unsqueeze(-1)],dim=-1)
+        ground_truth = torch.cat([inputs['obj_trajs_future_state'][...,:2],inputs['obj_trajs_future_mask'].unsqueeze(-1)],dim=-1)
+        # ground_truth = torch.cat([ego_gt.unsqueeze(1),neighbors_gt],dim=1)
+        loss = self.criterion(prediction, ground_truth, self.N_levels, inputs['track_index_to_predict']) #inputs['center_gt_final_valid_idx'])
         return loss
 
 
