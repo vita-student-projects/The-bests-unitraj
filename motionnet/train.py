@@ -12,6 +12,7 @@ from utils.utils import set_seed
 from pytorch_lightning.callbacks import ModelCheckpoint  # Import ModelCheckpoint
 import hydra
 from omegaconf import DictConfig, OmegaConf
+torch.cuda.empty_cache()
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def train(cfg):

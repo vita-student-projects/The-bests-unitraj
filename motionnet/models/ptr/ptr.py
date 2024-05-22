@@ -220,6 +220,8 @@ class PTR(BaseModel):
         output = {}
         output['predicted_probability'] = mode_probs # #[B, c]
         output['predicted_trajectory'] = out_dists.permute(2,0,1,3) # [c, T, B, 5] to [B, c, T, 5] to be able to parallelize code
+        output['map_features'] = orig_map_features
+        output['road_segs_masks'] = orig_road_segs_masks
         if len(np.argwhere(np.isnan(out_dists.detach().cpu().numpy()))) > 1:
             breakpoint()
         return output
