@@ -100,23 +100,23 @@ class GameFormer(BaseModel):
         subsequent_mask = (torch.triu(torch.ones((seq_len, seq_len), device=device), diagonal=1)).bool()
         return subsequent_mask
 
-    def process_observations(self, ego, agents):
+    def process_observations(self, agents):
         '''
         :param observations: (B, T, N+2, A+1) where N+2 is [ego, other_agents, env]
         :return: a tensor of only the agent dynamic states, active_agent masks and env masks.
         '''
         # ego stuff
-        ego_tensor = ego[:, :, :self.k_attr]
-        env_masks_orig = ego[:, :, -1]
+        ego_tensor = agents[:, :, 0, :self.k_attr]
+        env_masks_orig = agents[:, :, 0, -1]
         env_masks = (1.0 - env_masks_orig).to(torch.bool)
-        env_masks = env_masks.unsqueeze(1).repeat(1, self.c, 1).view(ego.shape[0] * self.c, -1)
+        env_masks = env_masks.unsqueeze(1).repeat(1, self.c, 1).view(agents.shape[0] * self.c, -1)
 
         # Agents stuff
-        temp_masks = torch.cat((torch.ones_like(env_masks_orig.unsqueeze(-1)), agents[:, :, :, -1]), dim=-1)
+        temp_masks = agents[:, :, :, -1]
         opps_masks = (1.0 - temp_masks).to(torch.bool)  # only for agents.
         opps_tensor = agents[:, :, :, :self.k_attr]  # only opponent states
 
-        return ego_tensor, opps_tensor, opps_masks, env_masks
+        return opps_tensor, opps_masks, env_masks
 
     def temporal_attn_fn(self, agents_emb, agent_masks, layer):
         '''
@@ -176,12 +176,13 @@ class GameFormer(BaseModel):
                                         Bivariate Gaussian distribution.
             mode_probs: shape [B, c] mode probability predictions P(z|X_{1:T_obs})
         '''
-        ego_in, agents_in, roads = inputs['ego_in'], inputs['agents_in'], inputs['roads']
+        agents_in, roads = inputs['agents_in'], inputs['roads']
 
-        B = ego_in.size(0)
+        B = agents_in.size(0)
         # Encode all input observations (k_attr --> d_k)
-        ego_tensor, neighbors_tensor, opps_masks, env_masks = self.process_observations(ego_in, agents_in)
-        agents_tensor = torch.cat((ego_tensor.unsqueeze(2), neighbors_tensor), dim=2)  # [B, T, N, k_attr]
+        agents_tensor, opps_masks, env_masks = self.process_observations(agents_in)
+        # breakpoint()
+        # agents_tensor = torch.cat((ego_tensor.unsqueeze(2), neighbors_tensor), dim=2)  # [B, T, N, k_attr]
 
         # encode each agent's dynamic state using a linear layer (k_attr --> d_k)
         agents_emb = self.agents_dynamic_encoder(agents_tensor).permute(1, 0, 2, 3)  # T, B, N, H
@@ -227,6 +228,7 @@ class GameFormer(BaseModel):
                 agent_dec_emb_map = self.map_attn_layers(query=out_seq, key=map_features, value=map_features,
                                                     key_padding_mask=road_segs_masks)[0]
                 out_seq = out_seq + agent_dec_emb_map #self.residual*out_seq + (1-self.residual)*ego_dec_emb_map
+                
                 out_seq = self.tx_decoder[d](out_seq, context, tgt_mask=time_masks, memory_key_padding_mask=env_masks)
                 # out_seq = self.residual*out_seq + (1-self.residual)*out_seq_tmp
                 
@@ -279,32 +281,33 @@ class GameFormer(BaseModel):
         inputs = batch['input_dict']
         agents_in, agents_mask, roads = inputs['obj_trajs'],inputs['obj_trajs_mask'] ,inputs['map_polylines']
         B,N,Tobs = agents_in.shape[:3]
-        # ego_in = torch.gather(agents_in, 1, inputs['track_index_to_predict'].view(-1,1,1,1).repeat(1,1,*agents_in.shape[-2:])).squeeze(1)
-        # ego_mask = torch.gather(agents_mask, 1, inputs['track_index_to_predict'].view(-1,1,1).repeat(1,1,agents_mask.shape[-1])).squeeze(1)
-        # agents_in = torch.cat([agents_in[...,:2],agents_mask.unsqueeze(-1)],dim=-1)
-        # agents_in = agents_in.transpose(1,2)
-        # ego_in = torch.cat([ego_in[...,:2],ego_mask.unsqueeze(-1)],dim=-1)
-        all_indices = torch.arange(self.config.max_num_agents).unsqueeze(0).repeat(B, 1).to(agents_in.device)
-        ego_indices = inputs['track_index_to_predict'].unsqueeze(1).to(all_indices.device)
-        ego_select_mask = all_indices == ego_indices.repeat(1,N)
-        neighbors_select_mask = all_indices != ego_indices.repeat(1,N)
+        # # ego_in = torch.gather(agents_in, 1, inputs['track_index_to_predict'].view(-1,1,1,1).repeat(1,1,*agents_in.shape[-2:])).squeeze(1)
+        # # ego_mask = torch.gather(agents_mask, 1, inputs['track_index_to_predict'].view(-1,1,1).repeat(1,1,agents_mask.shape[-1])).squeeze(1)
+        # # agents_in = torch.cat([agents_in[...,:2],agents_mask.unsqueeze(-1)],dim=-1)
+        # # agents_in = agents_in.transpose(1,2)
+        # # ego_in = torch.cat([ego_in[...,:2],ego_mask.unsqueeze(-1)],dim=-1)
+        # all_indices = torch.arange(self.config.max_num_agents).unsqueeze(0).repeat(B, 1).to(agents_in.device)
+        # ego_indices = inputs['track_index_to_predict'].unsqueeze(1).to(all_indices.device)
+        # ego_select_mask = all_indices == ego_indices.repeat(1,N)
+        # neighbors_select_mask = all_indices != ego_indices.repeat(1,N)
 
         if torch.any(inputs['track_index_to_predict'] != 0):
             breakpoint()
 
         # breakpoint()
-        ego_in = torch.masked_select(agents_in.view(B,N,-1), ego_select_mask.unsqueeze(-1)).view(B, Tobs, -1)
-        ego_mask = torch.masked_select(agents_mask, ego_select_mask.unsqueeze(-1)).view(B, Tobs)
-        neighbors_in = torch.masked_select(agents_in.view(B,N,-1), neighbors_select_mask.unsqueeze(-1)).view(B, N-1, Tobs, -1)
-        neighbors_mask = torch.masked_select(agents_mask, neighbors_select_mask.unsqueeze(-1)).view(B, N-1, Tobs)
+        # ego_in = torch.masked_select(agents_in.view(B,N,-1), ego_select_mask.unsqueeze(-1)).view(B, Tobs, -1)
+        # ego_mask = torch.masked_select(agents_mask, ego_select_mask.unsqueeze(-1)).view(B, Tobs)
+        # neighbors_in = torch.masked_select(agents_in.view(B,N,-1), neighbors_select_mask.unsqueeze(-1)).view(B, N-1, Tobs, -1)
+        # neighbors_mask = torch.masked_select(agents_mask, neighbors_select_mask.unsqueeze(-1)).view(B, N-1, Tobs)
 
-        ego_in = torch.cat([ego_in[...,:2],ego_mask.unsqueeze(-1)],dim=-1)
-        neighbors_in = torch.cat([neighbors_in[...,:2],neighbors_mask.unsqueeze(-1)],dim=-1)
+        # ego_in = torch.cat([ego_in[...,:2],ego_mask.unsqueeze(-1)],dim=-1)
+        # neighbors_in = torch.cat([neighbors_in[...,:2],neighbors_mask.unsqueeze(-1)],dim=-1)
+        agents_in = torch.cat([agents_in[...,:2],agents_mask.unsqueeze(-1)],dim=-1)
 
         # breakpoint()
         roads = torch.cat([inputs['map_polylines'][...,:2],inputs['map_polylines_mask'].unsqueeze(-1)],dim=-1)
-        model_input['ego_in'] = ego_in
-        model_input['agents_in'] = neighbors_in.transpose(1,2)
+        # model_input['ego_in'] = ego_in
+        model_input['agents_in'] = agents_in.transpose(1,2)
         model_input['roads'] = roads
         output = self._forward(model_input)
 
