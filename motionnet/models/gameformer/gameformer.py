@@ -36,7 +36,12 @@ class GameFormer(BaseModel):
 
         self.ptr = PTR(config)
         # Load the state dict from the checkpoint into the submodel
-        state_dict = torch.load('/home/avray/dlav/dlav_data/best_ptr.ckpt')["state_dict"]
+        if torch.cuda.is_available():
+            state_dict = torch.load('/home/avray/dlav/dlav_proj/dlav_data/best_ptr.ckpt')['state_dict']
+        else:
+            # Maps all tensors to CPU if CUDA is not available
+            state_dict = torch.load('/home/avray/dlav/dlav_proj/dlav_data/best_ptr.ckpt', map_location='cpu')['state_dict']
+        
         self.ptr.load_state_dict(state_dict)
 
         # ================= GameFormer Encoder =================
@@ -44,9 +49,9 @@ class GameFormer(BaseModel):
         self.agent_encoder = nn.LSTM(self.k_attr, self.d_k, 2, batch_first=True)
 
         # ================= GameFormer Decoder =================
-        # self.future_encoder = FutureEncoder(k_attr=k_attr, d_k=self.d_k)
-        # self.interaction_stage = nn.ModuleList([InteractionDecoder(self.future_encoder, self.T,
-        #                                                            self.num_heads, self.d_k, self.dropout) for _ in range(self.N_levels)])
+        self.future_encoder = FutureEncoder(k_attr=k_attr, d_k=self.d_k)
+        self.interaction_stage = nn.ModuleList([InteractionDecoder(self.future_encoder, self.T,
+                                                                   self.num_heads, self.d_k, self.dropout) for _ in range(self.N_levels)])
 
         self.criterion = Criterion(self.config)
 
@@ -73,6 +78,10 @@ class GameFormer(BaseModel):
         
         out_dists = []
         mode_probs = []
+        encodings = []
+        masks = []
+
+        agents_mask = torch.eq(agents[:,-1].sum(-1), 0) # B, N, k_attr
         for n in range(2):
             ptr_inputs = inputs.copy()
             center = inputs['agents_in'][:,-1,n,:2].clone()
@@ -90,10 +99,11 @@ class GameFormer(BaseModel):
             out_dist[...,:2] += center.view(-1,1,1,2)
             mode_prob = ptr_output['predicted_probability']
 
-
-
             out_dists.append(out_dist)
             mode_probs.append(mode_prob)
+
+            encodings.append(torch.cat([encoded_agents, ptr_output['map_features'].permute(1,0,2)], dim=1))
+            masks.append(torch.cat([agents_mask, ptr_output['road_segs_masks']], dim=1))
 
         out_dists = torch.stack(out_dists, dim=1)
         mode_probs = torch.stack(mode_probs, dim=1)
