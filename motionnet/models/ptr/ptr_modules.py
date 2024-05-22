@@ -150,7 +150,7 @@ class OutputModel(nn.Module):
         x_sigma = F.softplus(pred_obs[:, :, 2]) + self.min_stdev
         y_sigma = F.softplus(pred_obs[:, :, 3]) + self.min_stdev
         rho = torch.tanh(pred_obs[:, :, 4]) * 0.9  # for stability
-        return torch.stack([x_mean, y_mean, x_sigma, y_sigma, rho], dim=2)
+        return torch.stack([x_mean, y_mean, x_sigma, y_sigma, rho], dim=2), pred_obs
     
 
 class Criterion(nn.Module):

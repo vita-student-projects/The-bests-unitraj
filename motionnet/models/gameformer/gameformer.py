@@ -36,11 +36,11 @@ class GameFormer(BaseModel):
 
         self.ptr = PTR(config)
         # Load the state dict from the checkpoint into the submodel
-        if torch.cuda.is_available():
+        if False:#torch.cuda.is_available():
             state_dict = torch.load('/home/avray/dlav/dlav_proj/dlav_data/best_ptr.ckpt')['state_dict']
         else:
             # Maps all tensors to CPU if CUDA is not available
-            state_dict = torch.load('/home/avray/dlav/dlav_proj/dlav_data/best_ptr.ckpt', map_location='cpu')['state_dict']
+            state_dict = torch.load('/home/avray/dlav/dlav_data/best_ptr.ckpt', map_location='cpu')['state_dict']
         
         self.ptr.load_state_dict(state_dict)
 
@@ -49,6 +49,7 @@ class GameFormer(BaseModel):
         self.agent_encoder = nn.LSTM(self.k_attr, self.d_k, 2, batch_first=True)
 
         # ================= GameFormer Decoder =================
+        self.initial_stage = InitialDecoder(self.c, 16, self.T, self.num_heads,d_k=self.d_k)
         self.future_encoder = FutureEncoder(k_attr=k_attr, d_k=self.d_k)
         self.interaction_stage = nn.ModuleList([InteractionDecoder(self.future_encoder, self.T,
                                                                    self.num_heads, self.d_k, self.dropout) for _ in range(self.N_levels)])
@@ -72,8 +73,8 @@ class GameFormer(BaseModel):
         N = inputs['agents_in'].shape[2]
         agents= inputs['agents_in'][...,:2]
 
-        encoded_ego = self.ego_encoder(agents[:,:,0])[0][-1] #B, H
-        encoded_neighbors = [self.agent_encoder(agents[:,:,n])[0][-1] for n in range(1,N)]
+        encoded_ego = self.ego_encoder(agents[:,:,0])[0][:,-1] #B, H
+        encoded_neighbors = [self.agent_encoder(agents[:,:,n])[0][:,-1] for n in range(1,N)]
         encoded_agents = torch.stack([encoded_ego]+encoded_neighbors,dim=1) #B, N, H
         
         out_dists = []
@@ -81,23 +82,28 @@ class GameFormer(BaseModel):
         encodings = []
         masks = []
 
-        agents_mask = torch.eq(agents[:,-1].sum(-1), 0) # B, N, k_attr
-        for n in range(2):
+        agents_mask = torch.eq(agents[:,-1].sum(-1), 0) # B, N
+        agents_mask[:,0] = False
+        test = agents_mask.any(dim=0)
+        true_indices = torch.nonzero(test, as_tuple=True)[0]
+        N_inter = true_indices[0].item() if true_indices.numel() > 0 else None
+        # breakpoint()
+        N_inter = 2
+        for n in range(N_inter):
             ptr_inputs = inputs.copy()
             center = inputs['agents_in'][:,-1,n,:2].clone()
             heading = inputs['agents_in'][:,-1,n,2].clone()
-
+            
             ptr_inputs['agents_in'][...,:2] -=  center.view(-1,1,1,2)
             ptr_inputs['agents_in'][...,:2] = self.rotate_points(ptr_inputs['agents_in'][...,:2], torch.tensor(np.pi/2)-heading)
             ptr_inputs['ego_in'] = ptr_inputs['agents_in'][:, :, n]      
 
-
             ptr_output = self.ptr._forward(ptr_inputs)
 
-            out_dist = ptr_output['predicted_trajectory']
+            out_dist = ptr_output['pred_obs']
             out_dist[...,:2] = self.rotate_points(out_dist[...,:2], -torch.tensor(np.pi/2)+heading)
             out_dist[...,:2] += center.view(-1,1,1,2)
-            mode_prob = ptr_output['predicted_probability']
+            mode_prob = ptr_output['scores']
 
             out_dists.append(out_dist)
             mode_probs.append(mode_prob)
@@ -107,11 +113,37 @@ class GameFormer(BaseModel):
 
         out_dists = torch.stack(out_dists, dim=1)
         mode_probs = torch.stack(mode_probs, dim=1)
+        encodings = torch.stack(encodings, dim=1)
+        masks = torch.stack(masks, dim=1)
+
+        current_states = agents[:,-1]
 
         # return  [c, T, B, 5], [B, c]
+        
+        # output['level_0_probability'] = mode_probs # [B, N, c]
+        # output['level_0_trajectory'] = out_dists #   [B, N, c, T, 5] to be able to parallelize code
+
+
+
+        results = [self.initial_stage(i, current_states[:,i], encodings[:,i], masks[:,i]) for i in range(N_inter)]
+        last_content = torch.stack([result[0] for result in results], dim=1)# [B, N, c, H]
+        last_level = out_dists
+        last_scores = torch.stack([result[2] for result in results], dim=1)# [B, N, c, H]
+
         output = {}
-        output['level_0_probability'] = mode_probs#.unsqueeze(1) # #[B, c]
-        output['level_0_trajectory'] = out_dists#.unsqueeze(1) # [c, T, B, 5] to [B, c, T, 5] to be able to parallelize code
+        output[f'level_0_trajectory'], output[f'level_0_probability'] = self.get_probs(last_level, last_scores)
+
+        #level k interaction
+        for k in range(1, self.N_levels+1):
+            interaction_decoder = self.interaction_stage[k-1]
+            results = [interaction_decoder(i, current_states[:, :N_inter], last_level, last_scores, \
+                        last_content[:, i], encodings[:,i], masks[:,i]) for i in range(N_inter)]
+            last_content = torch.stack([result[0] for result in results], dim=1)
+            last_level = torch.stack([result[1] for result in results], dim=1)
+            last_scores = torch.stack([result[2] for result in results], dim=1) 
+
+            output[f'level_{k}_trajectory'], output[f'level_{k}_probability'] = self.get_probs(last_level, last_scores)
+
         if len(np.argwhere(np.isnan(out_dists.detach().cpu().numpy()))) > 1:
             breakpoint()
         return output
@@ -139,14 +171,24 @@ class GameFormer(BaseModel):
         output['predicted_probability'] = output[f'level_{self.N_levels}_probability'][:,0]
 
         return output, loss
+    
+    def get_probs(self, last_level, last_scores):
+        pred_obs = last_level # [B, c, T, 5]
+        mode_probs = F.softmax(last_scores, dim=-1) # [B, c]
+
+        x_mean = pred_obs[..., 0]
+        y_mean = pred_obs[..., 1]
+        x_sigma = F.softplus(pred_obs[..., 2]) + 0.01
+        y_sigma = F.softplus(pred_obs[..., 3]) + 0.01
+        rho = torch.tanh(pred_obs[..., 4]) * 0.9  # for stability
+        out_dists = torch.stack([x_mean, y_mean, x_sigma, y_sigma, rho], dim=-1)
+        return out_dists, mode_probs
 
     def get_loss(self, batch, prediction):
         inputs = batch['input_dict']
         ground_truth = torch.cat([inputs['obj_trajs_future_state'][...,:2],inputs['obj_trajs_future_mask'].unsqueeze(-1)],dim=-1)
         loss = self.criterion(prediction, ground_truth, self.N_levels, inputs['track_index_to_predict'])
         return loss
-
-
 
     def configure_optimizers(self):
         all_params = list(self.parameters())

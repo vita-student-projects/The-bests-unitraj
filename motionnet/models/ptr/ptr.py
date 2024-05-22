@@ -206,7 +206,9 @@ class PTR(BaseModel):
             out_seq = self.tx_decoder[d](out_seq, context, tgt_mask=time_masks, memory_key_padding_mask=env_masks)
             # out_seq = self.residual*out_seq + (1-self.residual)*out_seq_tmp
             
-        out_dists = self.output_model(out_seq).reshape(self.T, B, self.c, -1).permute(2, 0, 1, 3)
+        out_dists, pred_obs = self.output_model(out_seq)
+        out_dists = out_dists.reshape(self.T, B, self.c, -1).permute(2, 0, 1, 3)
+        pred_obs = pred_obs.reshape(self.T, B, self.c, -1).permute(2, 0, 1, 3)
 
         # Mode prediction
         mode_params_emb = self.P.repeat(1, B, 1)
@@ -214,12 +216,16 @@ class PTR(BaseModel):
 
         mode_params_emb = self.mode_map_attn(query=mode_params_emb, key=orig_map_features, value=orig_map_features,
                                                  key_padding_mask=orig_road_segs_masks)[0] + mode_params_emb
-        mode_probs = F.softmax(self.prob_predictor(mode_params_emb).squeeze(-1), dim=0).transpose(0, 1)
+        
+        scores = self.prob_predictor(mode_params_emb).squeeze(-1).transpose(0,1)
+        mode_probs = F.softmax(scores, dim=1)
 
         # return  [c, T, B, 5], [B, c]
         output = {}
         output['predicted_probability'] = mode_probs # #[B, c]
         output['predicted_trajectory'] = out_dists.permute(2,0,1,3) # [c, T, B, 5] to [B, c, T, 5] to be able to parallelize code
+        output['pred_obs'] = pred_obs.permute(2,0,1,3)
+        output['scores'] = scores
         output['map_features'] = orig_map_features
         output['road_segs_masks'] = orig_road_segs_masks
         if len(np.argwhere(np.isnan(out_dists.detach().cpu().numpy()))) > 1:

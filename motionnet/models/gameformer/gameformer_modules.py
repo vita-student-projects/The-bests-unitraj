@@ -259,8 +259,8 @@ class Criterion(nn.Module):
                     adefde_loss = torch.tensor(0.0).to(data.device)
 
                 # post_entropy
-                if n==0:
-                    final_loss += (loss + kl_loss + adefde_loss)
+                # if n==0:
+                final_loss += (loss + kl_loss + adefde_loss)
 
         final_loss /= (N_levels+1)*N
         if np.isnan(final_loss.detach().cpu().numpy()):
