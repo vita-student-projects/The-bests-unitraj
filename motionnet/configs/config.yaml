@@ -1,5 +1,5 @@
 # exp setting
-exp_name: 'gameformer old new loss'
+exp_name: '4 level max agents'
 ckpt_path: null
 seed: 42
 debug: True

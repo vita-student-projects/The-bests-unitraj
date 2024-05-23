@@ -40,7 +40,7 @@ class GameFormer(BaseModel):
         #     state_dict = torch.load('/home/avray/dlav/dlav_data/best_ptr.ckpt')['state_dict']
         # else:
         # Maps all tensors to CPU if CUDA is not available
-        state_dict = torch.load('/home/avray/dlav/dlav_data/best_ptr.ckpt', map_location='cpu')['state_dict']
+        state_dict = torch.load('/home/avray/dlav/dlav_proj/dlav_data/best_ptr.ckpt', map_location='cpu')['state_dict']
 
         self.ptr = PTR(self.config)
         self.ptr.load_state_dict(state_dict)
@@ -92,7 +92,7 @@ class GameFormer(BaseModel):
         true_indices = torch.nonzero(test, as_tuple=True)[0]
         N_inter = true_indices[0].item() if true_indices.numel() > 2 else 2
         # breakpoint()
-        N_inter = np.min((N_inter,3))
+        # N_inter = np.min((N_inter,3))
         for n in range(N_inter):
             ptr_inputs = {}
             ptr_inputs['agents_in'] = inputs['agents_in'].clone()

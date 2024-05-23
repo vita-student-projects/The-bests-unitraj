@@ -264,9 +264,9 @@ class Criterion(nn.Module):
 
                 # post_entropy
                 # if n==0:
-                final_loss = final_loss+(loss + kl_loss + adefde_loss)
+                final_loss += (loss + kl_loss + adefde_loss)
 
-        final_loss = final_loss/(N_levels+1)*N
+        final_loss /= ((N_levels+1)*N)
         if np.isnan(final_loss.detach().cpu().numpy()):
             breakpoint()
 
