@@ -133,8 +133,8 @@ class GameFormer(BaseModel):
 
         results = [self.initial_stage(i, current_states[:,i], encodings[:,i], masks[:,i]) for i in range(N_inter)]
         last_content = torch.stack([result[0] for result in results], dim=1)# [B, N, c, H]
-        last_level = out_dists
-        last_scores = mode_probs #torch.stack([result[2] for result in results], dim=1)# [B, N, c, H]
+        last_level = torch.stack([result[1] for result in results], dim=1) #out_dists
+        last_scores = torch.stack([result[2] for result in results], dim=1)#mode_probs #torch.stack([result[2] for result in results], dim=1)# [B, N, c, H]
 
         output = {}
         output[f'level_0_trajectory'], output[f'level_0_probability'] = self.get_probs(last_level, last_scores)
