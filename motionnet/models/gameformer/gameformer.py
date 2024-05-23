@@ -34,15 +34,17 @@ class GameFormer(BaseModel):
         self.N_levels = config['num_levels']
         self.tx_hidden_size = config['tx_hidden_size']
 
-        self.ptr = PTR(config)
-        # Load the state dict from the checkpoint into the submodel
-        if False:#torch.cuda.is_available():
-            state_dict = torch.load('/home/avray/dlav/dlav_proj/dlav_data/best_ptr.ckpt')['state_dict']
-        else:
-            # Maps all tensors to CPU if CUDA is not available
-            state_dict = torch.load('/home/avray/dlav/dlav_data/best_ptr.ckpt', map_location='cpu')['state_dict']
         
+        # Load the state dict from the checkpoint into the submodel
+        # if torch.cuda.is_available():
+        #     state_dict = torch.load('/home/avray/dlav/dlav_data/best_ptr.ckpt')['state_dict']
+        # else:
+        # Maps all tensors to CPU if CUDA is not available
+        state_dict = torch.load('/home/avray/dlav/dlav_data/best_ptr.ckpt', map_location='cpu')['state_dict']
+
+        self.ptr = PTR(self.config)
         self.ptr.load_state_dict(state_dict)
+        self.ptr.to(self.device)
 
         # ================= GameFormer Encoder =================
         self.ego_encoder = nn.LSTM(self.k_attr, self.d_k, 2, batch_first=True)
@@ -84,17 +86,22 @@ class GameFormer(BaseModel):
 
         agents_mask = torch.eq(agents[:,-1].sum(-1), 0) # B, N
         agents_mask[:,0] = False
+        # agents_mask2 = torch.eq(agents.sum(2).sum(-1), 0)
+        # breakpoint()
         test = agents_mask.any(dim=0)
         true_indices = torch.nonzero(test, as_tuple=True)[0]
-        N_inter = true_indices[0].item() if true_indices.numel() > 0 else None
+        N_inter = true_indices[0].item() if true_indices.numel() > 2 else 2
         # breakpoint()
-        N_inter = 2
+        N_inter = np.min((N_inter,3))
         for n in range(N_inter):
-            ptr_inputs = inputs.copy()
-            center = inputs['agents_in'][:,-1,n,:2].clone()
-            heading = inputs['agents_in'][:,-1,n,2].clone()
+            ptr_inputs = {}
+            ptr_inputs['agents_in'] = inputs['agents_in'].clone()
+            ptr_inputs['roads'] = inputs['roads'].clone()
+
+            center = ptr_inputs['agents_in'][:,-1,n,:2].clone()
+            heading = ptr_inputs['agents_in'][:,-1,n,2].clone()
             
-            ptr_inputs['agents_in'][...,:2] -=  center.view(-1,1,1,2)
+            ptr_inputs['agents_in'][...,:2] =  ptr_inputs['agents_in'][...,:2] - center.view(-1,1,1,2)
             ptr_inputs['agents_in'][...,:2] = self.rotate_points(ptr_inputs['agents_in'][...,:2], torch.tensor(np.pi/2)-heading)
             ptr_inputs['ego_in'] = ptr_inputs['agents_in'][:, :, n]      
 
@@ -102,7 +109,7 @@ class GameFormer(BaseModel):
 
             out_dist = ptr_output['pred_obs']
             out_dist[...,:2] = self.rotate_points(out_dist[...,:2], -torch.tensor(np.pi/2)+heading)
-            out_dist[...,:2] += center.view(-1,1,1,2)
+            out_dist[...,:2] = out_dist[...,:2]  + center.view(-1,1,1,2)
             mode_prob = ptr_output['scores']
 
             out_dists.append(out_dist)
@@ -117,7 +124,6 @@ class GameFormer(BaseModel):
         masks = torch.stack(masks, dim=1)
 
         current_states = agents[:,-1]
-
         # return  [c, T, B, 5], [B, c]
         
         # output['level_0_probability'] = mode_probs # [B, N, c]
@@ -128,7 +134,7 @@ class GameFormer(BaseModel):
         results = [self.initial_stage(i, current_states[:,i], encodings[:,i], masks[:,i]) for i in range(N_inter)]
         last_content = torch.stack([result[0] for result in results], dim=1)# [B, N, c, H]
         last_level = out_dists
-        last_scores = torch.stack([result[2] for result in results], dim=1)# [B, N, c, H]
+        last_scores = mode_probs #torch.stack([result[2] for result in results], dim=1)# [B, N, c, H]
 
         output = {}
         output[f'level_0_trajectory'], output[f'level_0_probability'] = self.get_probs(last_level, last_scores)
@@ -194,9 +200,10 @@ class GameFormer(BaseModel):
         all_params = list(self.parameters())
         ptr_params = list(self.ptr.parameters())
         main_params = list(set(all_params) - set(ptr_params))
-        
+        # optimizer = optim.Adam([{'params':all_params, 'lr':self.config['learning_rate'],'eps':0.0001}])
         optimizer = optim.Adam([{'params':main_params, 'lr':self.config['learning_rate'],'eps':0.0001},
                                 {'params':ptr_params, 'lr':0.0, 'eps':0.0001}])
+        
         scheduler = MultiStepLR(optimizer, milestones=self.config['learning_rate_sched'], gamma=0.5,
                                            verbose=True)
         return [optimizer], [scheduler]

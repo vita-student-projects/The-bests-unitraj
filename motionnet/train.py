@@ -12,7 +12,7 @@ from utils.utils import set_seed
 from pytorch_lightning.callbacks import ModelCheckpoint  # Import ModelCheckpoint
 import hydra
 from omegaconf import DictConfig, OmegaConf
-torch.cuda.empty_cache()
+
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def train(cfg):
@@ -54,7 +54,7 @@ def train(cfg):
         logger= None if cfg.debug else WandbLogger(project="motionnet", name=cfg.exp_name),
         devices=1 if cfg.debug else cfg.devices,
         gradient_clip_val=cfg.method.grad_clip_norm,
-        accelerator="cpu" if cfg.debug else "gpu",
+        accelerator="gpu" if cfg.debug else "gpu",
         profiler="simple",
         strategy="auto" if cfg.debug else "ddp_find_unused_parameters_true",#"ddp_find_unused_parameters_true",#
         callbacks=call_backs,

@@ -150,6 +150,10 @@ class InteractionDecoder(nn.Module):
         # post process
         trajectories[..., :2] += current_states[:, id, None, None, :2]
 
+         
+        # trajectories, scores = actors[:,id].clone(), scores[:,id].clone()
+        # breakpoint()
+
         return query_content, trajectories, scores 
 
 class Criterion(nn.Module):
@@ -260,18 +264,11 @@ class Criterion(nn.Module):
 
                 # post_entropy
                 # if n==0:
-                final_loss += (loss + kl_loss + adefde_loss)
+                final_loss = final_loss+(loss + kl_loss + adefde_loss)
 
-        final_loss /= (N_levels+1)*N
+        final_loss = final_loss/(N_levels+1)*N
         if np.isnan(final_loss.detach().cpu().numpy()):
             breakpoint()
-        # else:
-        #     print('Loss:', final_loss.detach().cpu().numpy(),
-        #           'NLL:', loss.detach().cpu().numpy(),
-        #           'KL:', kl_loss.detach().cpu().numpy(),
-        #           'ADE/FDE:', adefde_loss.detach().cpu().numpy(),
-        #           'Entropy:', entropy_loss.detach().cpu().numpy(),
-        #           modes_pred.detach().cpu().numpy())
 
         return final_loss
 
