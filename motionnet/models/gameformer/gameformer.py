@@ -178,15 +178,18 @@ class GameFormer(BaseModel):
         # breakpoint()
         top_trajectories = torch.gather(trajectories, 2, top_level.view(-1,1,1,1,1).repeat(1,self.c,1,self.T,5)).squeeze(2)
         top_scores = torch.gather(scores, 1, top_level.view(-1,1,1).repeat(1,1,self.c)).squeeze(1)
+
         #trajectories[:,:,top_level].squeeze(2)#torch.gather(trajectories, 1, top_indices.unsqueeze(-1).unsqueeze(-1).repeat(1,1,self.T,5))
         # top_scores = scores[top_level]
         output[f'top_trajectory'] = top_trajectories
         output[f'top_score'] = top_scores
 
-        loss = self.get_loss(batch, output)
+        loss, bests_levels = self.get_loss(batch, output)
 
-        output['predicted_trajectory'] = output[f'level_{self.N_levels}_trajectory'][:,0]
-        output['predicted_probability'] = output[f'level_{self.N_levels}_probability'][:,0]
+        # breakpoint()
+
+        output['predicted_trajectory'] = output['top_trajectory'] #output[f'level_{self.N_levels}_trajectory'][:,0]
+        output['predicted_probability'] = F.softmax(output['top_score'], dim=-1) #output[f'level_{self.N_levels}_probability'][:,0]
 
         return output, loss
     

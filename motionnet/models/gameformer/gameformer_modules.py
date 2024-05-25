@@ -284,8 +284,11 @@ class Criterion(nn.Module):
             sys.stdout.write(ERASE_LINE)     # Clear the line
 
         final_loss = 0.0
-        for l in range(N_levels+1):
-            for n in range(N):
+        bests_levels = []
+        for n in range(N):
+            bests_levels.append(0)
+            best_ade = 1e9
+            for l in range(N_levels+1):
                 scores = output[f'level_{l}_score'][:,n]
                 # breakpoint()
                 modes_pred = output[f'level_{l}_probability'][:,n]
@@ -332,7 +335,10 @@ class Criterion(nn.Module):
 
                 # compute ADE/FDE loss - L2 norms with between best predictions and GT.
                 if use_FDEADE_aux_loss:
-                    adefde_loss = self.l2_loss_fde(pred, data[:,n], mask[:,n], l, n, scores)
+                    adefde_loss, min_ade = self.l2_loss_fde(pred, data[:,n], mask[:,n], l, n, scores)
+                    if min_ade < best_ade:
+                        best_ade = min_ade
+                        bests_levels[n] = l
                 else:
                     adefde_loss = torch.tensor(0.0).to(data.device)
 
@@ -348,7 +354,7 @@ class Criterion(nn.Module):
         if np.isnan(final_loss.detach().cpu().numpy()):
             breakpoint()
 
-        return final_loss
+        return final_loss, bests_levels
 
     def l2_loss_fde(self, pred, data, mask, level,n, scores):
         score = torch.mean(scores)
@@ -378,4 +384,4 @@ class Criterion(nn.Module):
         
         loss, min_inds = (fde_loss + ade_loss).min(dim=1)
         # loss += scores_loss.sum(dim=1)
-        return 100.0 * loss.mean()
+        return 100.0 * loss.mean(), min_ade.mean()
