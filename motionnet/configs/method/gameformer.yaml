@@ -11,6 +11,7 @@ dropout: 0.1
 residual: 0
 entropy_weight: 40.0
 kl_weight: 20.0
+scores_loss_weight: 0.0
 use_FDEADE_aux_loss: True
 
 # train
