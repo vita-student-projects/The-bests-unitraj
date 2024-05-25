@@ -9,6 +9,59 @@ from scipy import special
 from torch.distributions import MultivariateNormal, Laplace
 import sys
 
+class MapEncoderPts(nn.Module):
+    '''
+    This class operates on the road lanes provided as a tensor with shape
+    (B, num_road_segs, num_pts_per_road_seg, k_attr+1)
+    '''
+    def __init__(self, d_k, map_attr=3, dropout=0.1):
+        super(MapEncoderPts, self).__init__()
+        self.dropout = dropout
+        self.d_k = d_k
+        self.map_attr = map_attr
+        init_ = lambda m: init(m, nn.init.xavier_normal_, lambda x: nn.init.constant_(x, 0), np.sqrt(2))
+
+        self.road_pts_lin = nn.Sequential(init_(nn.Linear(map_attr, self.d_k)))
+        self.road_pts_attn_layer = nn.MultiheadAttention(self.d_k, num_heads=8, dropout=self.dropout)
+        self.norm1 = nn.LayerNorm(self.d_k, eps=1e-5)
+        self.norm2 = nn.LayerNorm(self.d_k, eps=1e-5)
+        self.map_feats = nn.Sequential(
+            init_(nn.Linear(self.d_k, self.d_k)), nn.ReLU(), nn.Dropout(self.dropout),
+            init_(nn.Linear(self.d_k, self.d_k)),
+        )
+
+    def get_road_pts_mask(self, roads):
+        road_segment_mask = torch.sum(roads[:, :, :, -1], dim=2) == 0
+        road_pts_mask = (1.0 - roads[:, :, :, -1]).type(torch.BoolTensor).to(roads.device).view(-1, roads.shape[2])
+        road_pts_mask[:, 0][road_pts_mask.sum(-1) == roads.shape[2]] = False  # Ensures no NaNs due to empty rows.
+        return road_segment_mask, road_pts_mask
+
+    def forward(self, roads, agents_emb):
+        '''
+        :param roads: (B, S, P, k_attr+1)  where B is batch size, S is num road segments, P is
+        num pts per road segment.
+        :param agents_emb: (T_obs, B, d_k) where T_obs is the observation horizon. THis tensor is obtained from
+        PTR's encoder, and basically represents the observed socio-temporal context of agents.
+        :return: embedded road segments with shape (S)
+        '''
+        B = roads.shape[0]
+        S = roads.shape[1]
+        P = roads.shape[2]
+        road_segment_mask, road_pts_mask = self.get_road_pts_mask(roads)
+        road_pts_feats = self.road_pts_lin(roads[:, :, :, :self.map_attr]).view(B*S, P, -1).permute(1, 0, 2)
+
+        # Combining information from each road segment using attention with agent contextual embeddings as queries.
+        agents_emb = agents_emb[-1].unsqueeze(2).repeat(1, 1, S, 1).view(-1, self.d_k).unsqueeze(0)
+        road_seg_emb = self.road_pts_attn_layer(query=agents_emb, key=road_pts_feats, value=road_pts_feats,
+                                                key_padding_mask=road_pts_mask)[0]
+        road_seg_emb = self.norm1(road_seg_emb)
+        road_seg_emb2 = road_seg_emb + self.map_feats(road_seg_emb)
+        road_seg_emb2 = self.norm2(road_seg_emb2)
+        road_seg_emb = road_seg_emb2.view(B, S, -1)
+
+        return road_seg_emb.permute(1, 0, 2), road_segment_mask
+
+
 def init(module, weight_init, bias_init, gain=1):
     '''
     This function provides weight and bias initializations for linear layers.
@@ -16,6 +69,25 @@ def init(module, weight_init, bias_init, gain=1):
     weight_init(module.weight.data, gain=gain)
     bias_init(module.bias.data)
     return module
+
+
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model, dropout=0.1, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0).transpose(0, 1)
+        self.register_parameter('pe', nn.Parameter(pe, requires_grad=False))
+
+    def forward(self, x):
+        x = x + self.pe[:x.size(0), :]
+        return self.dropout(x)
 
 class FutureEncoder(nn.Module):
     def __init__(self, k_attr=2, d_k = 128):
@@ -207,13 +279,15 @@ class Criterion(nn.Module):
         ERASE_LINE = '\x1b[2K'     # ANSI escape code to erase the line
         # breakpoint()
         N = output[f'level_{0}_probability'].size(1)
-        for _ in range(0,(N_levels+1)*N+1):
+        for _ in range(0,(N_levels+1)+2):
             sys.stdout.write(CURSOR_UP_ONE)  # Move cursor up by one line
             sys.stdout.write(ERASE_LINE)     # Clear the line
 
         final_loss = 0.0
         for l in range(N_levels+1):
             for n in range(N):
+                scores = output[f'level_{l}_score'][:,n]
+                # breakpoint()
                 modes_pred = output[f'level_{l}_probability'][:,n]
                 pred = output[f'level_{l}_trajectory'][:,n].permute(1, 2, 0, 3)
                 mask = data[...,-1]
@@ -258,7 +332,7 @@ class Criterion(nn.Module):
 
                 # compute ADE/FDE loss - L2 norms with between best predictions and GT.
                 if use_FDEADE_aux_loss:
-                    adefde_loss = self.l2_loss_fde(pred, data[:,n], mask[:,n], l)
+                    adefde_loss = self.l2_loss_fde(pred, data[:,n], mask[:,n], l, n, scores)
                 else:
                     adefde_loss = torch.tensor(0.0).to(data.device)
 
@@ -266,21 +340,42 @@ class Criterion(nn.Module):
                 # if n==0:
                 final_loss += (loss + kl_loss + adefde_loss)
 
+        pred = output[f'top_trajectory'].permute(1, 2, 0, 3)
+        scores = output[f'top_score']
+        adefde_loss = self.l2_loss_fde(pred, data[:,0], mask[:,0], -1, 0, scores)
+
         final_loss /= ((N_levels+1)*N)
         if np.isnan(final_loss.detach().cpu().numpy()):
             breakpoint()
 
         return final_loss
 
-    def l2_loss_fde(self, pred, data, mask, level):
+    def l2_loss_fde(self, pred, data, mask, level,n, scores):
+        score = torch.mean(scores)
 
         fde_loss = (torch.norm((pred[:, -1, :, :2].transpose(0, 1) - data[:, -1, :2].unsqueeze(1)), 2, dim=-1) * mask[:,
                                                                                                                  -1:])
         ade_loss = (torch.norm((pred[:, :, :, :2].transpose(1, 2) - data[:, :, :2].unsqueeze(0)), 2,
                                dim=-1) * mask.unsqueeze(0)).mean(dim=2).transpose(0, 1)
         
+        # breakpoint()
+        # best_ade = ade_loss==torch.min(ade_loss,dim=1)[0].unsqueeze(1)
+        # best_scores = scores==torch.max(scores,dim=1)[0].unsqueeze(1)
+        # scores_loss = best_ade^best_scores
+
+        temperature = 0.1  # This controls the sharpness of the distribution, smaller values make it sharper
+        best_ade = F.softmin(ade_loss / temperature, dim=1)
+        best_scores = F.softmax(scores/temperature, dim=1)
+
+        # Calculate the loss as the distance between these two distributions
+        scores_loss = F.mse_loss(best_ade, best_scores,reduction='none')#*10
+        # breakpoint()
+        
         min_ade, _ = ade_loss.min(dim=1)
         min_fde, _ = fde_loss.min(dim=1)
-        print(f'\t level {level} : minADE = {min_ade.mean()} ||  minFDE = {min_fde.mean()}')
+        if n==0:
+            print(f'\t level {level} : minADE = {min_ade.mean()} ||  minFDE = {min_fde.mean()} || score = {score}')
+        
         loss, min_inds = (fde_loss + ade_loss).min(dim=1)
+        # loss += scores_loss.sum(dim=1)
         return 100.0 * loss.mean()
