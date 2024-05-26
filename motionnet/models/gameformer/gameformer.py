@@ -38,11 +38,12 @@ class GameFormer(BaseModel):
         self.encoder = PTR_Encoder(self.config, k_attr=k_attr, map_attr=map_attr)
 
         current_state_dict = self.encoder.state_dict()
-        ptr_state_dict = torch.load('/home/avray/dlav/dlav_data/best_ptr.ckpt', map_location='cpu')['state_dict']
+        ptr_state_dict = torch.load(config['ptr_path'], map_location='cpu')['state_dict']
         for name, param in current_state_dict.items():
             if name in ptr_state_dict and param.size() == ptr_state_dict[name].size():
                 current_state_dict[name] = ptr_state_dict[name]
-                print(f"Loaded {name} from ptr.")
+            else:
+                print(f"Skipped {name} from ptr.")
 
 
         # Load the updated state dict back into the model
@@ -142,27 +143,6 @@ class GameFormer(BaseModel):
             output[f'level_{k}_score'] = last_scores
             output[f'level_{k}_trajectory'], output[f'level_{k}_probability'] = self.get_probs(last_level, last_scores)
 
-        # if len(np.argwhere(np.isnan(out_dists.detach().cpu().numpy()))) > 1:
-        #     breakpoint()
-        return output
-
-    def forward(self, batch, batch_idx):
-        model_input = {}
-        inputs = batch['input_dict']
-        agents_in, agents_mask, roads = inputs['obj_trajs'],inputs['obj_trajs_mask'] ,inputs['map_polylines']
-
-        if torch.any(inputs['track_index_to_predict'] != 0):
-            breakpoint()
-
-        agents_heading = torch.atan2(agents_in[...,34], agents_in[...,33]).unsqueeze(-1)
-        # breakpoint()
-        agents_in = torch.cat([agents_in[...,:2],agents_heading, agents_mask.unsqueeze(-1)],dim=-1).transpose(1,2)
-        roads = torch.cat([inputs['map_polylines'][...,:2],inputs['map_polylines_mask'].unsqueeze(-1)],dim=-1)
-        # model_input['ego_in'] = ego_in
-        model_input['agents_in'] = agents_in
-        model_input['roads'] = roads
-        output = self._forward(model_input)
-
         trajectories = []
         scores = []
         B = output[f'level_0_trajectory'].shape[0]
@@ -184,19 +164,41 @@ class GameFormer(BaseModel):
         output[f'top_trajectory'] = top_trajectories
         output[f'top_score'] = top_scores
 
-        loss, bests_levels = self.get_loss(batch, output)
+        output['predicted_trajectory'] = top_trajectories
+        output['predicted_probability'] = F.softmax(top_scores, dim=-1)
 
-        # cheating
-        top_level = bests_levels[:,0]
-        top_trajectories = torch.gather(trajectories, 2, top_level.view(-1,1,1,1,1).repeat(1,self.c,1,self.T,5)).squeeze(2)
-        top_scores = torch.gather(scores, 1, top_level.view(-1,1,1).repeat(1,1,self.c)).squeeze(1)
+        return output
 
-        output['top_trajectory'] = top_trajectories
-        output['top_score'] = top_scores
+    def forward(self, batch, batch_idx):
+        model_input = {}
+        inputs = batch['input_dict']
+        agents_in, agents_mask, roads = inputs['obj_trajs'],inputs['obj_trajs_mask'] ,inputs['map_polylines']
+
+        if torch.any(inputs['track_index_to_predict'] != 0):
+            breakpoint()
+
+        agents_heading = torch.atan2(agents_in[...,34], agents_in[...,33]).unsqueeze(-1)
+        # breakpoint()
+        agents_in = torch.cat([agents_in[...,:2],agents_heading, agents_mask.unsqueeze(-1)],dim=-1).transpose(1,2)
+        roads = torch.cat([inputs['map_polylines'][...,:2],inputs['map_polylines_mask'].unsqueeze(-1)],dim=-1)
+        # model_input['ego_in'] = ego_in
+        model_input['agents_in'] = agents_in
+        model_input['roads'] = roads
+        output = self._forward(model_input)
+
+        loss = self.get_loss(batch, output) #, bests_levels
+
+        # # cheating
+        # top_level = bests_levels[:,0]
+        # top_trajectories = torch.gather(trajectories, 2, top_level.view(-1,1,1,1,1).repeat(1,self.c,1,self.T,5)).squeeze(2)
+        # top_scores = torch.gather(scores, 1, top_level.view(-1,1,1).repeat(1,1,self.c)).squeeze(1)
+
+        # output['top_trajectory'] = top_trajectories
+        # output['top_score'] = top_scores
 
 
-        output['predicted_trajectory'] = output['top_trajectory'] #output[f'level_{self.N_levels}_trajectory'][:,0]
-        output['predicted_probability'] = F.softmax(output['top_score'], dim=-1) #output[f'level_{self.N_levels}_probability'][:,0]
+        # output['predicted_trajectory'] = output['top_trajectory'] #output[f'level_{self.N_levels}_trajectory'][:,0]
+        # output['predicted_probability'] = F.softmax(output['top_score'], dim=-1) #output[f'level_{self.N_levels}_probability'][:,0]
 
         return output, loss
     

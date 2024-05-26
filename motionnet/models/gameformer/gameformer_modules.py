@@ -345,20 +345,19 @@ class Criterion(nn.Module):
         maxs_scores = [torch.stack(max_score, dim=1) for max_score in maxs_scores]
         maxs_scores = torch.stack(maxs_scores,dim=1)
 
-        scores_loss = self.scores_loss(mins_ade, maxs_scores)
-        
-        bests_levels, pred_bests_levels = self.print(mins_ade, maxs_scores, scores_loss)        
-        
-        # pred = output[f'top_trajectory'].permute(1, 2, 0, 3)
-        # scores = output[f'top_score']
+        scores_loss = self.scores_loss(mins_ade, maxs_scores)  
+        scores_loss *= self.config['scores_loss_weight']     
 
         final_loss /= ((N_levels+1)*N)
-        final_loss += scores_loss*self.config['scores_loss_weight']
+        final_loss += scores_loss
+
+        # bests_levels, pred_bests_levels = 
+        self.print(mins_ade, maxs_scores, scores_loss, final_loss) 
 
         if np.isnan(final_loss.detach().cpu().numpy()):
             breakpoint()
 
-        return final_loss, bests_levels
+        return final_loss#, bests_levels
 
     def l2_loss_fde(self, pred, data, mask, level,n):
         fde_loss = (torch.norm((pred[:, -1, :, :2].transpose(0, 1) - data[:, -1, :2].unsqueeze(1)), 2, dim=-1) * mask[:,
@@ -374,16 +373,14 @@ class Criterion(nn.Module):
         return 100.0 * loss.mean(), min_ade
     
     def scores_loss(self, mins_ade, maxs_scores):
-        N,N_levels = mins_ade.shape[1:]
+        B,N,N_levels = mins_ade.shape[:3]
 
-        tpr = 0.1 #sharpness of the distribution
+        tpr = 0.01 #sharpness of the distribution
         
         bests_levels = F.softmin(mins_ade / tpr, dim=-1)
-        # bests_levels = torch.argmin(mins_ade, dim=-1)
         # best_min_ade = torch.gather(mins_ade,2,bests_levels.unsqueeze(1)).squeeze(1)
         
         pred_bests_levels = F.softmax(maxs_scores / tpr, dim=-1)
-        # pred_bests_levels = torch.argmax(maxs_scores, dim=-1)
         # pred_best_min_ade = torch.gather(mins_ade,2,pred_bests_levels.unsqueeze(1)).squeeze(1)
 
         scores_loss = F.mse_loss(bests_levels, pred_bests_levels, reduction='none')
@@ -393,8 +390,8 @@ class Criterion(nn.Module):
 
 
     
-    def print(self, mins_ade, maxs_scores, scores_loss):
-        N,N_levels = mins_ade.shape[1:]
+    def print(self, mins_ade, maxs_scores, scores_loss, final_loss):
+        B,N,N_levels = mins_ade.shape[:3]
 
         tpr = 0.1 #sharpness of the distribution
         
@@ -405,38 +402,22 @@ class Criterion(nn.Module):
         pred_bests_levels_ = F.softmax(maxs_scores / tpr, dim=-1)
         pred_bests_levels = torch.argmax(maxs_scores, dim=-1)
         pred_best_min_ade = torch.gather(mins_ade,2,pred_bests_levels.unsqueeze(1)).squeeze(1)
+
+        level_acc = (bests_levels == pred_bests_levels).sum()/(B*N)
         
         CURSOR_UP_ONE = '\x1b[1A'  # ANSI escape code to move cursor up by one line
         ERASE_LINE = '\x1b[2K'     # ANSI escape code to erase the line
-        for _ in range(0,(N_levels)+4):
+        for _ in range(0,(N_levels)+6):
             sys.stdout.write(CURSOR_UP_ONE)  # Move cursor up by one line
             sys.stdout.write(ERASE_LINE)     # Clear the line
         
         n = 0
         for l in range(N_levels):
-            print(f'level {l} : minADE = {mins_ade[:,n,l].mean()}')
-        print(f'best : minADE = {best_min_ade[:,n].mean()}')
-        print(f'est_best : minADE = {pred_best_min_ade[:,n].mean()}')
-        print(f'score_loss = {scores_loss}')
+            print(f'level {l} : minADE = {mins_ade[:,n,l].mean():.3f}')
+        print(f'best : minADE = {best_min_ade[:,n].mean():.3f}')
+        print(f'est_best : minADE = {pred_best_min_ade[:,n].mean():.3f}')
+        print(f'level_acc = {level_acc:.2f}')
+        print(f'score_loss = {scores_loss:.0f}')
+        print(f'final_loss = {final_loss:.0f}')
 
-        return bests_levels, pred_bests_levels
-    # def score_loss(self, scores, mask):
-    # score = torch.mean(scores)
-    #     temperature = 0.1  # This controls the sharpness of the distribution, smaller values make it sharper
-    #     best_ade = F.softmin(ade_loss / temperature, dim=1)
-    #     best_scores = F.softmax(scores/temperature, dim=1)
-
-    #      # breakpoint()
-    #     # best_ade = ade_loss==torch.min(ade_loss,dim=1)[0].unsqueeze(1)
-    #     # best_scores = scores==torch.max(scores,dim=1)[0].unsqueeze(1)
-    #     # scores_loss = best_ade^best_scores
-
-    #     # Calculate the loss as the distance between these two distributions
-    #     scores_loss = F.mse_loss(best_ade, best_scores,reduction='none')#*10
-    #     # breakpoint()
-
-    # if n==0:
-    #         print(f'\t level {level} : minADE = {min_ade.mean()} ||  minFDE = {min_fde.mean()} || score = {score}')
-
-    #     # loss += scores_loss.sum(dim=1)
-    #     return torch.mean(scores * mask) * 10
+        return #bests_levels, pred_bests_levels

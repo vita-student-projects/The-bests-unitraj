@@ -46,18 +46,32 @@ def generate_predictions(cfg):
     with torch.no_grad():
         for i, batch in enumerate(tqdm(test_loader)):
             batch = to_device(batch, device)
-            model_input = {}
-            inputs = batch['input_dict']
-            agents_in, agents_mask, roads = inputs['obj_trajs'], inputs['obj_trajs_mask'], inputs['map_polylines']
-            ego_in = torch.gather(agents_in, 1, inputs['track_index_to_predict'].view(-1, 1, 1, 1).repeat(1, 1, *agents_in.shape[-2:])).squeeze(1)
-            ego_mask = torch.gather(agents_mask, 1, inputs['track_index_to_predict'].view(-1, 1, 1).repeat(1, 1,agents_mask.shape[-1])).squeeze(1)
-            agents_in = torch.cat([agents_in[..., :2], agents_mask.unsqueeze(-1)], dim=-1)
-            agents_in = agents_in.transpose(1, 2)
-            ego_in = torch.cat([ego_in[..., :2], ego_mask.unsqueeze(-1)], dim=-1)
-            roads = torch.cat([inputs['map_polylines'][..., :2], inputs['map_polylines_mask'].unsqueeze(-1)], dim=-1)
-            model_input['ego_in'] = ego_in
-            model_input['agents_in'] = agents_in
-            model_input['roads'] = roads
+            if cfg['model_name'] == 'ptr': 
+                model_input = {}
+                inputs = batch['input_dict']
+                agents_in, agents_mask, roads = inputs['obj_trajs'], inputs['obj_trajs_mask'], inputs['map_polylines']
+                ego_in = torch.gather(agents_in, 1, inputs['track_index_to_predict'].view(-1, 1, 1, 1).repeat(1, 1, *agents_in.shape[-2:])).squeeze(1)
+                ego_mask = torch.gather(agents_mask, 1, inputs['track_index_to_predict'].view(-1, 1, 1).repeat(1, 1,agents_mask.shape[-1])).squeeze(1)
+                agents_in = torch.cat([agents_in[..., :2], agents_mask.unsqueeze(-1)], dim=-1)
+                agents_in = agents_in.transpose(1, 2)
+                ego_in = torch.cat([ego_in[..., :2], ego_mask.unsqueeze(-1)], dim=-1)
+                roads = torch.cat([inputs['map_polylines'][..., :2], inputs['map_polylines_mask'].unsqueeze(-1)], dim=-1)
+                model_input['ego_in'] = ego_in
+                model_input['agents_in'] = agents_in
+                model_input['roads'] = roads
+            elif cfg['model_name'] == 'gameformer':
+                model_input = {}
+                inputs = batch['input_dict']
+                agents_in, agents_mask, roads = inputs['obj_trajs'],inputs['obj_trajs_mask'] ,inputs['map_polylines']
+
+                agents_heading = torch.atan2(agents_in[...,34], agents_in[...,33]).unsqueeze(-1)
+                agents_in = torch.cat([agents_in[...,:2],agents_heading, agents_mask.unsqueeze(-1)],dim=-1).transpose(1,2)
+                roads = torch.cat([inputs['map_polylines'][...,:2],inputs['map_polylines_mask'].unsqueeze(-1)],dim=-1)
+                model_input['agents_in'] = agents_in
+                model_input['roads'] = roads
+            else:
+                raise ValueError(f"Model name {cfg['model_name']} not supported")                
+
             output = model._forward(model_input)
             predictions.extend(output['predicted_trajectory'].cpu().numpy()[..., :2])
 

@@ -1,5 +1,6 @@
 # common
 model_name: gameformer
+ptr_path: '/home/avray/dlav/dlav_data/baseline_ptr.ckpt'
 num_modes: 6
 hidden_size: 128
 num_encoder_layers: 2
