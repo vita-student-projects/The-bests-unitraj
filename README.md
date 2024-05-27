@@ -14,7 +14,7 @@ https://github.com/vita-epfl/unitraj-DLAV.git
 - Added random masking while training in `__getitem__` method of `BaseDataset`class in the `base_dataset.py` file. This augmentation is done in a new method named `random_zero_out`.
 
 ### Milestone 3
-- A new model `gameformer` is added to the unitraj Framework based on [_1_](https://openaccess.thecvf.com/content/ICCV2023/papers/Huang_GameFormer_Game-theoretic_Modeling_and_Learning_of_Transformer-based_Interactive_Prediction_and_ICCV_2023_paper.pdf) and there [code](https://github.com/MCZhi/GameFormer/tree/main). This method is based on game theorie to perform the best prediction possible.
+- A new model `gameformer` is added to the unitraj Framework based on [_1_](https://openaccess.thecvf.com/content/ICCV2023/papers/Huang_GameFormer_Game-theoretic_Modeling_and_Learning_of_Transformer-based_Interactive_Prediction_and_ICCV_2023_paper.pdf) and the following [code](https://github.com/MCZhi/GameFormer/tree/main). This method is based on game theory to obtain the best possible prediction.
 
 #### 3.1 Gameformer dataset
 - The gameformer dataset remains the same as for ptr model
@@ -23,7 +23,7 @@ https://github.com/vita-epfl/unitraj-DLAV.git
 - The model [`gameformer.py`](motionnet/models/gameformer/gameformer.py) is mainly composed in three parts. The encoder, the multilevel decoder and the best level selection.
 ##### 3.2.1 Encoder
 - The encoder proposed by [_1_](https://openaccess.thecvf.com/content/ICCV2023/papers/Huang_GameFormer_Game-theoretic_Modeling_and_Learning_of_Transformer-based_Interactive_Prediction_and_ICCV_2023_paper.pdf) is not well adapted for our dataset since it requires map lines from each vehicle point of view but we only have the overall map.
-- We choose instead the ptr encoder model which encode the scene from ego point of view and we reproduce the with neighbors.
+- We choose instead the ptr encoder model which encodes the scene from ego point of view and we reproduce this with the neighbors.
 - Note: the ptr encoder worked well if all agents/map points are translate/rotate arround the z axis in order at the last time step ego is at position (0,0) with a heading of pi/2. Hence we perform some agents / map rotation each time we want to predict a neighbor trajectory.
 
 ##### 3.2.2 Decoder
