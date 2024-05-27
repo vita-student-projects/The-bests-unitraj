@@ -375,12 +375,17 @@ class Criterion(nn.Module):
     def scores_loss(self, mins_ade, maxs_scores):
         B,N,N_levels = mins_ade.shape[:3]
 
-        tpr = 0.01 #sharpness of the distribution
+        norm_mins_ade = mins_ade - mins_ade.mean(dim=-1).unsqueeze(-1)
+        norm_mins_ade = norm_mins_ade / (norm_mins_ade.std(dim=-1).unsqueeze(-1)+1e-5)
+        norm_maxs_scores = maxs_scores - maxs_scores.mean(dim=-1).unsqueeze(-1)
+        norm_maxs_scores = norm_maxs_scores / (norm_maxs_scores.std(dim=-1).unsqueeze(-1) + 1e-5)
+
+        tpr = 1 #sharpness of the distribution
         
-        bests_levels = F.softmin(mins_ade / tpr, dim=-1)
+        bests_levels = F.softmin(norm_mins_ade / tpr, dim=-1)
         # best_min_ade = torch.gather(mins_ade,2,bests_levels.unsqueeze(1)).squeeze(1)
         
-        pred_bests_levels = F.softmax(maxs_scores / tpr, dim=-1)
+        pred_bests_levels = F.softmax(norm_maxs_scores / tpr, dim=-1)
         # pred_best_min_ade = torch.gather(mins_ade,2,pred_bests_levels.unsqueeze(1)).squeeze(1)
 
         scores_loss = F.mse_loss(bests_levels, pred_bests_levels, reduction='none')
@@ -407,7 +412,7 @@ class Criterion(nn.Module):
         
         CURSOR_UP_ONE = '\x1b[1A'  # ANSI escape code to move cursor up by one line
         ERASE_LINE = '\x1b[2K'     # ANSI escape code to erase the line
-        for _ in range(0,(N_levels)+6):
+        for _ in range(0,(N_levels)+5):
             sys.stdout.write(CURSOR_UP_ONE)  # Move cursor up by one line
             sys.stdout.write(ERASE_LINE)     # Clear the line
         
@@ -417,7 +422,7 @@ class Criterion(nn.Module):
         print(f'best : minADE = {best_min_ade[:,n].mean():.3f}')
         print(f'est_best : minADE = {pred_best_min_ade[:,n].mean():.3f}')
         print(f'level_acc = {level_acc:.2f}')
-        print(f'score_loss = {scores_loss:.0f}')
-        print(f'final_loss = {final_loss:.0f}')
+        print(f'score_loss = {scores_loss:.2f}')
+        # print(f'final_loss = {final_loss:.0f}')
 
         return #bests_levels, pred_bests_levels

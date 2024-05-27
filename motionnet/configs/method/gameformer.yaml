@@ -1,18 +1,18 @@
 # common
 model_name: gameformer
-ptr_path: '/home/avray/dlav/dlav_data/baseline_ptr.ckpt'
+ptr_path: '/home/avray/dlav/dlav_data/best_ptr.ckpt'
 num_modes: 6
 hidden_size: 128
-num_encoder_layers: 2
-num_decoder_layers: 2
+num_encoder_layers: 4
+num_decoder_layers: 3
 num_levels: 4
 tx_hidden_size: 384
 tx_num_heads: 16
 dropout: 0.1
-residual: 0
+residual: 0.5
 entropy_weight: 40.0
 kl_weight: 20.0
-scores_loss_weight: 0.0
+scores_loss_weight: 100.0
 use_FDEADE_aux_loss: True
 
 # train
