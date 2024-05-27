@@ -1,6 +1,6 @@
 # exp setting
-exp_name: '4 level max agents'
-ckpt_path: null #'/home/avray/dlav/unitraj-DLAV/motionnet/motionnet/gameformer_3al4_l4/checkpoints/epoch=34-val/minADE6=1.19.ckpt'
+exp_name: 'gameformer 3al4_scoreloss_100'
+ckpt_path: null #'/home/avray/dlav/unitraj-DLAV/motionnet/motionnet/3al4_scoreloss_100/checkpoints/epoch=55-val/minADE6=1.14.ckpt'
 seed: 42
 debug: True
 devices: [0]

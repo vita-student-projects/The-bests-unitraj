@@ -1,19 +1,29 @@
 # common
 model_name: gameformer
-ptr_path: '/home/avray/dlav/dlav_data/best_ptr.ckpt'
+use_pretrained_ptr: True
+ptr_path: '/home/avray/dlav/dlav_data/baseline_ptr.ckpt'
 num_modes: 6
 hidden_size: 128
-num_encoder_layers: 4
-num_decoder_layers: 3
-num_levels: 4
-tx_hidden_size: 384
 tx_num_heads: 16
 dropout: 0.1
-residual: 0.5
+residual: 0.0
+
+# encoder
+num_encoder_layers: 2
+tx_hidden_size: 384
+
+# decoder
+num_levels: 4
+
+# loss
 entropy_weight: 40.0
 kl_weight: 20.0
 scores_loss_weight: 100.0
 use_FDEADE_aux_loss: True
+
+# output 
+select_level: -1 # -> -1 for automatic selection (default)
+
 
 # train
 max_epochs: 200 

@@ -26,34 +26,30 @@ class GameFormer(BaseModel):
         self.d_k = config['hidden_size']
         self.c = config['num_modes']
 
-        self.L_enc = config['num_encoder_layers']
         self.dropout = config['dropout']
-        self.residual = config['residual']
         self.num_heads = config['tx_num_heads']
-        self.L_dec = config['num_decoder_layers']
         self.N_levels = config['num_levels']
-        self.tx_hidden_size = config['tx_hidden_size']
 
-        # ================= GameFormer Encoder =================
+        # ================= Scene Encoder (From PTR model) =================
         self.encoder = PTR_Encoder(self.config, k_attr=k_attr, map_attr=map_attr)
 
-        current_state_dict = self.encoder.state_dict()
-        ptr_state_dict = torch.load(config['ptr_path'], map_location='cpu')['state_dict']
-        for name, param in current_state_dict.items():
-            if name in ptr_state_dict and param.size() == ptr_state_dict[name].size():
-                current_state_dict[name] = ptr_state_dict[name]
-            else:
-                print(f"Skipped {name} from ptr.")
+        if self.config['use_pretrained_ptr']:
+            current_state_dict = self.encoder.state_dict()
+            ptr_state_dict = torch.load(config['ptr_path'], map_location='cpu')['state_dict']
+            for name, param in current_state_dict.items():
+                if name in ptr_state_dict and param.size() == ptr_state_dict[name].size():
+                    current_state_dict[name] = ptr_state_dict[name]
+                else:
+                    print(f"Skipped {name} from ptr.")
+                    
+            # Load the updated state dict back into the model
+            self.encoder.load_state_dict(current_state_dict, strict=False)
 
-
-        # Load the updated state dict back into the model
-        self.encoder.load_state_dict(current_state_dict, strict=False)
-
-        # ================= GameFormer Encoder =================
+        # ================= Agents Encoder =================
         self.ego_encoder = nn.LSTM(self.k_attr, self.d_k, 2, batch_first=True)
         self.agent_encoder = nn.LSTM(self.k_attr, self.d_k, 2, batch_first=True)
 
-        # ================= GameFormer Decoder =================
+        # ================= Gameformer Decoder =================
         self.initial_stage = InitialDecoder(self.c, 16, self.T, self.num_heads,d_k=self.d_k)
         self.future_encoder = FutureEncoder(k_attr=k_attr, d_k=self.d_k)
         self.interaction_stage = nn.ModuleList([InteractionDecoder(self.future_encoder, self.T,
@@ -82,20 +78,15 @@ class GameFormer(BaseModel):
         encoded_neighbors = [self.agent_encoder(agents[:,:,n])[0][:,-1] for n in range(1,N)]
         encoded_agents = torch.stack([encoded_ego]+encoded_neighbors,dim=1) #B, N, H
         
-        out_dists = []
-        mode_probs = []
         encodings = []
         masks = []
 
         agents_mask = torch.eq(agents[:,-1].sum(-1), 0) # B, N
         agents_mask[:,0] = False
-        # agents_mask2 = torch.eq(agents.sum(2).sum(-1), 0)
-        # breakpoint()
-        test = agents_mask.any(dim=0)
-        true_indices = torch.nonzero(test, as_tuple=True)[0]
-        N_inter = true_indices[0].item() if true_indices.numel() > 2 else 2
-        # breakpoint()
-        N_inter = np.min((N_inter,3))
+
+        #interactions between 3 agents due to computational time
+        #try to make the model more efficient with parallelisation for example ...
+        N_inter = 3 
         for n in range(N_inter):
             ptr_inputs = {}
             ptr_inputs['agents_in'] = inputs['agents_in'].clone()
@@ -121,6 +112,7 @@ class GameFormer(BaseModel):
 
         current_states = agents[:,-1]
 
+        # level 0 decoder
         results = [self.initial_stage(i, current_states[:,i], encodings[:,i], masks[:,i]) for i in range(N_inter)]
         last_content = torch.stack([result[0] for result in results], dim=1)# [B, N, c, H]
         last_level = torch.stack([result[1] for result in results], dim=1) 
@@ -131,7 +123,7 @@ class GameFormer(BaseModel):
         output['level_0_trajectory'], output['level_0_probability'] = self.get_probs(last_level, last_scores)
         
 
-        #level k interaction
+        #level k interaction decoder
         for k in range(1, self.N_levels+1):
             interaction_decoder = self.interaction_stage[k-1]
             results = [interaction_decoder(i, current_states[:, :N_inter], last_level, last_scores, \
@@ -145,7 +137,6 @@ class GameFormer(BaseModel):
 
         trajectories = []
         scores = []
-        B = output[f'level_0_trajectory'].shape[0]
         for i in range(self.N_levels+1):
             trajectories.append(output[f'level_{i}_trajectory'][:,0])
             scores.append(output[f'level_{i}_score'][:,0])
@@ -153,16 +144,15 @@ class GameFormer(BaseModel):
         trajectories = torch.stack(trajectories, dim=2)
         scores = torch.stack(scores, dim=1)
         mean_scores = torch.mean(scores, dim=2)
-        
-        top_level = torch.topk(mean_scores, 1)[1].squeeze(1)
-        # breakpoint()
-        top_trajectories = torch.gather(trajectories, 2, top_level.view(-1,1,1,1,1).repeat(1,self.c,1,self.T,5)).squeeze(2)
-        top_scores = torch.gather(scores, 1, top_level.view(-1,1,1).repeat(1,1,self.c)).squeeze(1)
 
-        #trajectories[:,:,top_level].squeeze(2)#torch.gather(trajectories, 1, top_indices.unsqueeze(-1).unsqueeze(-1).repeat(1,1,self.T,5))
-        # top_scores = scores[top_level]
-        output[f'top_trajectory'] = top_trajectories
-        output[f'top_score'] = top_scores
+        
+        if self.config['select_level'] == -1: # select the level with the highest score
+            top_level = torch.topk(mean_scores, 1)[1].squeeze(1)
+            top_trajectories = torch.gather(trajectories, 2, top_level.view(-1,1,1,1,1).repeat(1,self.c,1,self.T,5)).squeeze(2)
+            top_scores = torch.gather(scores, 1, top_level.view(-1,1,1).repeat(1,1,self.c)).squeeze(1)
+        else: # select the desired level
+            top_trajectories = trajectories[:,:,self.config['select_level']]
+            top_scores = scores[:,self.config['select_level']]
 
         output['predicted_trajectory'] = top_trajectories
         output['predicted_probability'] = F.softmax(top_scores, dim=-1)
@@ -174,31 +164,19 @@ class GameFormer(BaseModel):
         inputs = batch['input_dict']
         agents_in, agents_mask, roads = inputs['obj_trajs'],inputs['obj_trajs_mask'] ,inputs['map_polylines']
 
+        # just control if ego is always at index 0
         if torch.any(inputs['track_index_to_predict'] != 0):
             breakpoint()
 
         agents_heading = torch.atan2(agents_in[...,34], agents_in[...,33]).unsqueeze(-1)
-        # breakpoint()
         agents_in = torch.cat([agents_in[...,:2],agents_heading, agents_mask.unsqueeze(-1)],dim=-1).transpose(1,2)
         roads = torch.cat([inputs['map_polylines'][...,:2],inputs['map_polylines_mask'].unsqueeze(-1)],dim=-1)
-        # model_input['ego_in'] = ego_in
         model_input['agents_in'] = agents_in
         model_input['roads'] = roads
+        
         output = self._forward(model_input)
 
-        loss = self.get_loss(batch, output) #, bests_levels
-
-        # # cheating
-        # top_level = bests_levels[:,0]
-        # top_trajectories = torch.gather(trajectories, 2, top_level.view(-1,1,1,1,1).repeat(1,self.c,1,self.T,5)).squeeze(2)
-        # top_scores = torch.gather(scores, 1, top_level.view(-1,1,1).repeat(1,1,self.c)).squeeze(1)
-
-        # output['top_trajectory'] = top_trajectories
-        # output['top_score'] = top_scores
-
-
-        # output['predicted_trajectory'] = output['top_trajectory'] #output[f'level_{self.N_levels}_trajectory'][:,0]
-        # output['predicted_probability'] = F.softmax(output['top_score'], dim=-1) #output[f'level_{self.N_levels}_probability'][:,0]
+        loss = self.get_loss(batch, output)
 
         return output, loss
     
@@ -241,9 +219,7 @@ class GameFormer(BaseModel):
         ], dim=-2)  # rotation_matrices will have shape [batch_size, 2, 2]
         
         B,T,N = trajs.shape[:3]
-        # points should have shape [batch_size, ..., 2], where the last dimension are the xy coordinates
         # Apply the rotation matrix to points
-        # We use matmul which handles batched matrix multiplication
         rotated_points = torch.matmul(trajs.reshape(B,-1,2),rotation_matrices).reshape(B,T,N,2)
         
         return rotated_points
@@ -256,7 +232,6 @@ class PTR_Encoder(BaseModel):
 
         self.config = config
         init_ = lambda m: init(m, nn.init.xavier_normal_, lambda x: nn.init.constant_(x, 0), np.sqrt(2))
-        self.T = config['future_len']
         self.past = config['past_len']
         self.fisher_information = None
         self.map_attr = map_attr
@@ -268,7 +243,6 @@ class PTR_Encoder(BaseModel):
         self.dropout = config['dropout']
         self.residual = config['residual']
         self.num_heads = config['tx_num_heads']
-        self.L_dec = config['num_decoder_layers']
         self.tx_hidden_size = config['tx_hidden_size']
 
 

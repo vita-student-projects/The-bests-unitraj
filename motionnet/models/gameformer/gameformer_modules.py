@@ -98,13 +98,7 @@ class FutureEncoder(nn.Module):
     def state_process(self, trajs, current_states):
         c = trajs.shape[2]
         current_states = current_states.unsqueeze(2).expand(-1, -1, c, -1)
-        # xy = torch.cat([current_states[:, :, :, None, :2], trajs], dim=-2)
-        # dxy = torch.diff(xy, dim=-2)
-        # v = dxy / 0.1
-        # theta = torch.atan2(dxy[..., 1], dxy[..., 0].clamp(min=1e-3)).unsqueeze(-1)
-        # T = trajs.shape[3]
-        # size = current_states[:, :, :, None, 5:8].expand(-1, -1, -1, T, -1)
-        trajs = torch.cat([trajs], dim=-1) # (x, y, heading, vx, vy, w, l, h)
+        trajs = torch.cat([trajs], dim=-1) # (x, y) # to add : heading, vx, vy, w, l, h)
 
         return trajs
 
@@ -222,10 +216,6 @@ class InteractionDecoder(nn.Module):
         # post process
         trajectories[..., :2] += current_states[:, id, None, None, :2]
 
-         
-        # trajectories, scores = actors[:,id].clone(), scores[:,id].clone()
-        # breakpoint()
-
         return query_content, trajectories, scores 
 
 class Criterion(nn.Module):
@@ -336,8 +326,6 @@ class Criterion(nn.Module):
                 else:
                     adefde_loss = torch.tensor(0.0).to(data.device)
 
-                # post_entropy
-                # if n==0:
                 final_loss += (loss + kl_loss + adefde_loss)
 
         mins_ade = [torch.stack(min_ade, dim=1) for min_ade in mins_ade]
@@ -373,7 +361,6 @@ class Criterion(nn.Module):
         return 100.0 * loss.mean(), min_ade
     
     def scores_loss(self, mins_ade, maxs_scores):
-        B,N,N_levels = mins_ade.shape[:3]
 
         norm_mins_ade = mins_ade - mins_ade.mean(dim=-1).unsqueeze(-1)
         norm_mins_ade = norm_mins_ade / (norm_mins_ade.std(dim=-1).unsqueeze(-1)+1e-5)
@@ -382,11 +369,8 @@ class Criterion(nn.Module):
 
         tpr = 1 #sharpness of the distribution
         
-        bests_levels = F.softmin(norm_mins_ade / tpr, dim=-1)
-        # best_min_ade = torch.gather(mins_ade,2,bests_levels.unsqueeze(1)).squeeze(1)
-        
+        bests_levels = F.softmin(norm_mins_ade / tpr, dim=-1)        
         pred_bests_levels = F.softmax(norm_maxs_scores / tpr, dim=-1)
-        # pred_best_min_ade = torch.gather(mins_ade,2,pred_bests_levels.unsqueeze(1)).squeeze(1)
 
         scores_loss = F.mse_loss(bests_levels, pred_bests_levels, reduction='none')
         scores_loss = scores_loss.mean()
@@ -397,14 +381,10 @@ class Criterion(nn.Module):
     
     def print(self, mins_ade, maxs_scores, scores_loss, final_loss):
         B,N,N_levels = mins_ade.shape[:3]
-
-        tpr = 0.1 #sharpness of the distribution
         
-        bests_levels_ = F.softmin(mins_ade / tpr, dim=-1)
         bests_levels = torch.argmin(mins_ade, dim=-1)
         best_min_ade = torch.gather(mins_ade,2,bests_levels.unsqueeze(1)).squeeze(1)
         
-        pred_bests_levels_ = F.softmax(maxs_scores / tpr, dim=-1)
         pred_bests_levels = torch.argmax(maxs_scores, dim=-1)
         pred_best_min_ade = torch.gather(mins_ade,2,pred_bests_levels.unsqueeze(1)).squeeze(1)
 
@@ -423,6 +403,5 @@ class Criterion(nn.Module):
         print(f'est_best : minADE = {pred_best_min_ade[:,n].mean():.3f}')
         print(f'level_acc = {level_acc:.2f}')
         print(f'score_loss = {scores_loss:.2f}')
-        # print(f'final_loss = {final_loss:.0f}')
 
-        return #bests_levels, pred_bests_levels
+        return 
