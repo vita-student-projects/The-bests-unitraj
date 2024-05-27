@@ -202,9 +202,12 @@ class GameFormer(BaseModel):
         all_params = list(self.parameters())
         ptr_params = list(self.encoder.parameters())
         main_params = list(set(all_params) - set(ptr_params))
-        # optimizer = optim.Adam([{'params':all_params, 'lr':self.config['learning_rate'],'eps':0.0001}])
-        optimizer = optim.Adam([{'params':main_params, 'lr':self.config['learning_rate'],'eps':0.0001},
-                                {'params':ptr_params, 'lr':0.0, 'eps':0.0001}])
+
+        if self.config['use_pretrained_ptr']:
+            optimizer = optim.Adam([{'params':main_params, 'lr':self.config['learning_rate'],'eps':0.0001},
+                                    {'params':ptr_params, 'lr':0.0, 'eps':0.0001}])
+        else :
+            optimizer = optim.Adam([{'params':all_params, 'lr':self.config['learning_rate'],'eps':0.0001}])
         
         scheduler = MultiStepLR(optimizer, milestones=self.config['learning_rate_sched'], gamma=0.5,
                                            verbose=True)
