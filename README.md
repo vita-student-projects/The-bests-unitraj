@@ -11,7 +11,38 @@ https://github.com/vita-epfl/unitraj-DLAV.git
 - Added residuals for encoder layers in `ptr.py` model
 
 - One new parameter `augment` in the `config.yaml` file
-- Added random masking while training in `__getitem__` method of `BaseDataset`class in the `base_dataset.py` file. This augmentation is done in a new method named `random_zero_out`. 
+- Added random masking while training in `__getitem__` method of `BaseDataset`class in the `base_dataset.py` file. This augmentation is done in a new method named `random_zero_out`.
+
+### Milestone 3
+- A new model `gameformer` is added to the unitraj Framework based on [_1_](https://openaccess.thecvf.com/content/ICCV2023/papers/Huang_GameFormer_Game-theoretic_Modeling_and_Learning_of_Transformer-based_Interactive_Prediction_and_ICCV_2023_paper.pdf) and there [code](https://github.com/MCZhi/GameFormer/tree/main). This method is based on game theorie to perform the best prediction possible.
+
+#### 3.1 Gameformer dataset
+- The gameformer dataset remains the same as for ptr model
+
+#### 3.2 GameFormer model
+- The model [`gameformer.py`](motionnet/models/gameformer/gameformer.py) is mainly composed in three parts. The encoder, the multilevel decoder and the best level selection.
+##### 3.2.1 Encoder
+- The encoder proposed by [_1_](https://openaccess.thecvf.com/content/ICCV2023/papers/Huang_GameFormer_Game-theoretic_Modeling_and_Learning_of_Transformer-based_Interactive_Prediction_and_ICCV_2023_paper.pdf) is not well adapted for our dataset since it requires map lines from each vehicle point of view but we only have the overall map.
+- We choose instead the ptr encoder model which encode the scene from ego point of view and we reproduce the with neighbors.
+- Note: the ptr encoder worked well if all agents/map points are translate/rotate arround the z axis in order at the last time step ego is at position (0,0) with a heading of pi/2. Hence we perform some agents / map rotation each time we want to predict a neighbor trajectory.
+
+##### 3.2.2 Decoder
+- The decoder is mainly the same as proposed by [_1_](https://openaccess.thecvf.com/content/ICCV2023/papers/Huang_GameFormer_Game-theoretic_Modeling_and_Learning_of_Transformer-based_Interactive_Prediction_and_ICCV_2023_paper.pdf).
+- There is first an initial stage to predict trajectories only from past features.
+- Then there are k level interactions decoder to modify trajectory predictions based on future interactions.
+
+##### 3.2.3 Best level selection
+- Based on the scores of all levels, we would like to select the level with highest score for every prediction.
+- IMPORTANT NOTE : We were not able to train the scores correctly during this short project time slot hence the predictor actually act as a random selector.
+
+#### 3.3 GameFormer modules
+- You can find all modules needed by gameformer module in the [`gameformer_mudules.py`](motionnet/models/gameformer/gameformer_modules.py) file.
+- The only change is in the loss computation. Instead of computing the loss only on ego as ptr, we compute a mean loss for all agents prediction at each decoder level. And we add a score loss to train scores to inversaly fit the minADE (again the in out actual implementation, the scores are not well trained)
+
+#### 3.4 Gameformer config
+- In the [`gameformer.yaml`](motionnet/configs/method/gameformer.yaml) config file there are few more parameters as in the ptr method.
+- You can set the number of levels, the score loss weight and the output desired level (set to -1 for scores based prediction).
+- It is also possible to train only the decoder parts of the model by using an pretrained ptr encoder
 
 
 
