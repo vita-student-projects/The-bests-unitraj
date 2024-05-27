@@ -36,7 +36,7 @@ https://github.com/vita-epfl/unitraj-DLAV.git
 - IMPORTANT NOTE : We were not able to train the scores correctly during this short project time slot hence the predictor actually act as a random selector.
 
 #### 3.3 GameFormer modules
-- You can find all modules needed by gameformer module in the [`gameformer_mudules.py`](motionnet/models/gameformer/gameformer_modules.py) file.
+- You can find all modules needed by gameformer module in the [`gameformer_modules.py`](motionnet/models/gameformer/gameformer_modules.py) file.
 - The only change is in the loss computation. Instead of computing the loss only on ego as ptr, we compute a mean loss for all agents prediction at each decoder level. And we add a score loss to train scores to inversaly fit the minADE (again the in out actual implementation, the scores are not well trained)
 
 #### 3.4 Gameformer config
